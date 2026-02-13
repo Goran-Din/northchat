@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { Softphone } from '@/components/softphone/softphone'
 import type { User } from '@supabase/supabase-js'
 
 interface DashboardShellProps {
@@ -23,6 +24,7 @@ const navigation = [
 export function DashboardShell({ user, profile, children }: DashboardShellProps) {
   const pathname = usePathname()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [phoneOpen, setPhoneOpen] = useState(true)
   const supabase = createClient()
 
   const handleSignOut = async () => {
@@ -31,6 +33,7 @@ export function DashboardShell({ user, profile, children }: DashboardShellProps)
   }
 
   const tenantName = profile?.tenants?.name || 'NorthChat'
+  const tenantId = profile?.tenant_id || ''
   const displayName = profile?.display_name || user.email
   const roleName = profile?.roles?.name || 'User'
 
@@ -118,18 +121,40 @@ export function DashboardShell({ user, profile, children }: DashboardShellProps)
           </button>
 
           <div className="flex items-center gap-4">
-            {/* Agent Status Indicator - placeholder */}
+            {/* Agent Status Indicator */}
             <div className="flex items-center gap-2">
               <div className="w-2.5 h-2.5 bg-green-500 rounded-full"></div>
               <span className="text-sm text-gray-600">Available</span>
             </div>
+
+            {/* Phone toggle button */}
+            <button
+              onClick={() => setPhoneOpen(!phoneOpen)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                phoneOpen 
+                  ? 'bg-blue-50 text-blue-700' 
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              📞 {phoneOpen ? 'Hide Phone' : 'Show Phone'}
+            </button>
           </div>
         </header>
 
-        {/* Page Content */}
-        <main className="p-6">
-          {children}
-        </main>
+        {/* Content area with optional phone panel */}
+        <div className="flex">
+          {/* Page Content */}
+          <main className="flex-1 p-6">
+            {children}
+          </main>
+
+          {/* Softphone Panel (right side) */}
+          {phoneOpen && tenantId && (
+            <aside className="hidden lg:block p-4 border-l border-gray-200 bg-gray-50">
+              <Softphone userId={user.id} tenantId={tenantId} />
+            </aside>
+          )}
+        </div>
       </div>
     </div>
   )
