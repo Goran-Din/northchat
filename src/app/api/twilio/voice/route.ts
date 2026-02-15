@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import twilio from 'twilio'
+import { supabaseAdmin } from '@/lib/supabase/admin'
 
 const VoiceResponse = twilio.twiml.VoiceResponse
 
@@ -30,18 +31,29 @@ export async function POST(request: NextRequest) {
       }, formatted)
     }
   } else {
-    // Incoming call - ring the browser client
-    // For now, ring all connected clients. Later we'll add smart routing.
+    // Incoming call - ring all available agents' browsers simultaneously
     const dial = twiml.dial({
       timeout: 30,
       action: `${process.env.NEXT_PUBLIC_APP_URL}/api/twilio/call-complete`,
       method: 'POST',
     })
 
-    // Ring the first available agent
-    // TODO: Implement smart routing based on call_routing_rules
-    dial.client('agent')
-    
+    // Query all available agents regardless of tenant
+    const { data: agents } = await supabaseAdmin
+      .from('agent_status')
+      .select('user_id')
+      .in('status', ['available', 'online'])
+
+    if (agents && agents.length > 0) {
+      console.log(`Incoming call from ${from} - ringing ${agents.length} available agent(s)`)
+      for (const agent of agents) {
+        dial.client(agent.user_id)
+      }
+    } else {
+      console.log(`Incoming call from ${from} - no available agents, falling back to default`)
+      dial.client('default')
+    }
+
     // If no one answers after timeout, go to voicemail
     // The action URL above handles this
   }
