@@ -28,6 +28,7 @@ function isWithinBusinessHours(businessHours: Record<string, any>, timezone: str
       return false
     }
 
+    console.log('BH Check:', { weekday, currentTime, todaySchedule })
     return currentTime >= todaySchedule.open && currentTime < todaySchedule.close
   } catch (error) {
     console.error('Error checking business hours:', error)
@@ -74,11 +75,13 @@ export async function POST(request: NextRequest) {
 
     // Look up which tenant owns this phone number
     // For now, use the first active tenant (we'll add multi-tenant phone routing later)
-    const { data: tenants } = await supabaseAdmin
+    const { data: tenants, error: tenantError } = await supabaseAdmin
       .from('tenants')
       .select('id, business_hours, after_hours_message, after_hours_action, timezone')
       .eq('status', 'active')
       .limit(1)
+
+    console.log('Tenant lookup result:', JSON.stringify(tenants), 'Error:', tenantError)
 
     const tenant = tenants?.[0] || null
 
