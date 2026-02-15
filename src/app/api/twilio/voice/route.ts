@@ -13,18 +13,21 @@ export async function POST(request: NextRequest) {
 
   if (to) {
     // Outgoing call from browser
-    if (to.startsWith('+') || to.match(/^\d+$/)) {
-      // Calling a phone number
+    if (to.startsWith('client:')) {
+      // Calling another browser client (agent-to-agent)
+      const clientName = to.slice('client:'.length)
+      const dial = twiml.dial({ callerId })
+      dial.client(clientName)
+    } else {
+      // Calling a phone number - strip non-digits and format
+      const digits = to.replace(/\D/g, '')
+      const formatted = digits.length === 10 ? `+1${digits}` : `+${digits}`
       const dial = twiml.dial({ callerId })
       dial.number({
         statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
         statusCallback: `${process.env.NEXT_PUBLIC_APP_URL}/api/twilio/status`,
         statusCallbackMethod: 'POST',
-      }, to.startsWith('+') ? to : `+1${to}`)
-    } else {
-      // Calling another browser client (agent-to-agent)
-      const dial = twiml.dial({ callerId })
-      dial.client(to)
+      }, formatted)
     }
   } else {
     // Incoming call - ring the browser client
