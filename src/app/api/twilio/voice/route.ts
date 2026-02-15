@@ -4,6 +4,37 @@ import { supabaseAdmin } from '@/lib/supabase/admin'
 
 const VoiceResponse = twilio.twiml.VoiceResponse
 
+// Check if current time is within business hours for a tenant
+function isWithinBusinessHours(businessHours: Record<string, any>, timezone: string): boolean {
+  try {
+    // Get current time in tenant's timezone
+    const now = new Date()
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      weekday: 'long',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    })
+
+    const parts = formatter.formatToParts(now)
+    const weekday = parts.find(p => p.type === 'weekday')?.value?.toLowerCase() || ''
+    const hour = parts.find(p => p.type === 'hour')?.value || '00'
+    const minute = parts.find(p => p.type === 'minute')?.value || '00'
+    const currentTime = `${hour}:${minute}`
+
+    const todaySchedule = businessHours[weekday]
+    if (!todaySchedule || !todaySchedule.is_open) {
+      return false
+    }
+
+    return currentTime >= todaySchedule.open && currentTime < todaySchedule.close
+  } catch (error) {
+    console.error('Error checking business hours:', error)
+    return true // Default to business hours if check fails
+  }
+}
+
 export async function POST(request: NextRequest) {
   const formData = await request.formData()
   const to = formData.get('To') as string
@@ -12,50 +43,98 @@ export async function POST(request: NextRequest) {
 
   const twiml = new VoiceResponse()
 
-  if (to) {
-    // Outgoing call from browser
+  if (to && to !== callerId) {
+    // === OUTBOUND CALL FROM BROWSER ===
     if (to.startsWith('client:')) {
-      // Calling another browser client (agent-to-agent)
-      const clientName = to.slice('client:'.length)
+      // Agent-to-agent call
+      const clientName = to.replace('client:', '')
       const dial = twiml.dial({ callerId })
       dial.client(clientName)
     } else {
-      // Calling a phone number - strip non-digits and format
-      const digits = to.replace(/\D/g, '')
-      const formatted = digits.length === 10 ? `+1${digits}` : `+${digits}`
+      // Calling a phone number
+      let formattedNumber = to.replace(/\D/g, '')
+      if (formattedNumber.length === 10) {
+        formattedNumber = `+1${formattedNumber}`
+      } else if (!formattedNumber.startsWith('+')) {
+        formattedNumber = `+${formattedNumber}`
+      } else {
+        formattedNumber = to
+      }
+
       const dial = twiml.dial({ callerId })
       dial.number({
         statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
         statusCallback: `${process.env.NEXT_PUBLIC_APP_URL}/api/twilio/status`,
         statusCallbackMethod: 'POST',
-      }, formatted)
+      }, formattedNumber)
     }
   } else {
-    // Incoming call - ring all available agents' browsers simultaneously
-    const dial = twiml.dial({
-      timeout: 30,
-      action: `${process.env.NEXT_PUBLIC_APP_URL}/api/twilio/call-complete`,
-      method: 'POST',
-    })
+    // === INBOUND CALL ===
+    console.log('Inbound call from:', from)
 
-    // Query all available agents regardless of tenant
-    const { data: agents } = await supabaseAdmin
-      .from('agent_status')
-      .select('user_id')
-      .in('status', ['available', 'online'])
+    // Look up which tenant owns this phone number
+    // For now, use the first active tenant (we'll add multi-tenant phone routing later)
+    const { data: tenant } = await supabaseAdmin
+      .from('tenants')
+      .select('id, business_hours, after_hours_message, after_hours_action, timezone')
+      .eq('status', 'active')
+      .limit(1)
+      .single()
 
-    if (agents && agents.length > 0) {
-      console.log(`Incoming call from ${from} - ringing ${agents.length} available agent(s)`)
-      for (const agent of agents) {
-        dial.client(agent.user_id)
-      }
-    } else {
-      console.log(`Incoming call from ${from} - no available agents, falling back to default`)
-      dial.client('default')
+    if (!tenant) {
+      twiml.say({ voice: 'Polly.Amy' }, 'Sorry, this number is not currently in service.')
+      return new NextResponse(twiml.toString(), {
+        headers: { 'Content-Type': 'text/xml' },
+      })
     }
 
-    // If no one answers after timeout, go to voicemail
-    // The action URL above handles this
+    const duringBusinessHours = isWithinBusinessHours(
+      tenant.business_hours || {},
+      tenant.timezone || 'America/Chicago'
+    )
+
+    if (duringBusinessHours) {
+      // === BUSINESS HOURS FLOW ===
+      // Step 1: Ring all available agents for 15 seconds
+      console.log('Business hours - ringing available agents')
+
+      const { data: agents } = await supabaseAdmin
+        .from('agent_status')
+        .select('user_id')
+        .eq('status', 'available')
+
+      const dial = twiml.dial({
+        timeout: 15,
+        action: `${process.env.NEXT_PUBLIC_APP_URL}/api/twilio/call-fallback`,
+        method: 'POST',
+      })
+
+      if (agents && agents.length > 0) {
+        console.log(`Ringing ${agents.length} available agents`)
+        agents.forEach(agent => {
+          dial.client(agent.user_id)
+        })
+      } else {
+        console.log('No available agents, will fall through to manager')
+        dial.client('no-agents-online')
+      }
+    } else {
+      // === AFTER HOURS FLOW ===
+      console.log('After hours - sending to voicemail')
+
+      const afterHoursMsg = tenant.after_hours_message ||
+        'Thank you for calling. Our office is currently closed. Please leave a message and we will return your call during business hours.'
+
+      twiml.say({ voice: 'Polly.Amy' }, afterHoursMsg)
+      twiml.record({
+        maxLength: 120,
+        transcribe: false,
+        recordingStatusCallback: `${process.env.NEXT_PUBLIC_APP_URL}/api/twilio/recording`,
+        recordingStatusCallbackMethod: 'POST',
+        playBeep: true,
+      })
+      twiml.say({ voice: 'Polly.Amy' }, 'Thank you. Goodbye.')
+    }
   }
 
   return new NextResponse(twiml.toString(), {
