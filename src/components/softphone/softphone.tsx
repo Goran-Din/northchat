@@ -332,6 +332,12 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
               type="tel"
               value={phoneNumber}
               onChange={(e) => setPhoneNumber(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && phoneNumber.trim() && deviceReady) {
+                  e.preventDefault()
+                  makeCall()
+                }
+              }}
               placeholder="Enter phone number"
               className="w-full px-3 py-2.5 text-center text-lg font-mono border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               disabled={callState !== 'idle'}
