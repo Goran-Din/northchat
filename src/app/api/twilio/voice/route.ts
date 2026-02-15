@@ -74,12 +74,13 @@ export async function POST(request: NextRequest) {
 
     // Look up which tenant owns this phone number
     // For now, use the first active tenant (we'll add multi-tenant phone routing later)
-    const { data: tenant } = await supabaseAdmin
+    const { data: tenants } = await supabaseAdmin
       .from('tenants')
       .select('id, business_hours, after_hours_message, after_hours_action, timezone')
       .eq('status', 'active')
       .limit(1)
-      .single()
+
+    const tenant = tenants?.[0] || null
 
     if (!tenant) {
       twiml.say({ voice: 'Polly.Amy' }, 'Sorry, this number is not currently in service.')
