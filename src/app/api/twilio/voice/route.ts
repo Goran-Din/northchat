@@ -7,32 +7,27 @@ const VoiceResponse = twilio.twiml.VoiceResponse
 // Check if current time is within business hours for a tenant
 function isWithinBusinessHours(businessHours: Record<string, any>, timezone: string): boolean {
   try {
-    // Get current time in tenant's timezone
     const now = new Date()
-    const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone,
-      weekday: 'long',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    })
+    const options: Intl.DateTimeFormatOptions = { timeZone: timezone }
 
-    const parts = formatter.formatToParts(now)
-    const weekday = parts.find(p => p.type === 'weekday')?.value?.toLowerCase() || ''
-    const hour = parts.find(p => p.type === 'hour')?.value || '00'
-    const minute = parts.find(p => p.type === 'minute')?.value || '00'
-    const currentTime = `${hour}:${minute}`
+    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
+    const localDate = new Date(now.toLocaleString('en-US', options))
+    const weekday = dayNames[localDate.getDay()]
+    const hours = localDate.getHours()
+    const minutes = localDate.getMinutes()
+    const currentTime = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+
+    console.log('BH Check:', { weekday, currentTime, schedule: businessHours[weekday] })
 
     const todaySchedule = businessHours[weekday]
     if (!todaySchedule || !todaySchedule.is_open) {
       return false
     }
 
-    console.log('BH Check:', { weekday, currentTime, todaySchedule })
     return currentTime >= todaySchedule.open && currentTime < todaySchedule.close
   } catch (error) {
     console.error('Error checking business hours:', error)
-    return true // Default to business hours if check fails
+    return true
   }
 }
 
