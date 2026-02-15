@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { createClient } from '@/lib/supabase/client'
 import { Device, Call } from '@twilio/voice-sdk'
 
 interface SoftphoneProps {
@@ -23,7 +22,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
 
   const timerRef = useRef<NodeJS.Timeout | null>(null)
   const callStartRef = useRef<Date | null>(null)
-  const supabase = createClient()
 
   // Initialize Twilio Device
   const initDevice = useCallback(async () => {
@@ -125,33 +123,17 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
   // Log call to database
   const logCall = async (direction: string, phone: string, callSid: string, disposition: string) => {
     try {
-      // Look up contact by phone number
-      const { data: identifier } = await supabase
-        .from('contact_identifiers')
-        .select('contact_id')
-        .eq('identifier_type', 'phone')
-        .eq('identifier_value', phone)
-        .single()
-
-      await supabase.from('call_records').insert({
-        tenant_id: tenantId,
-        contact_id: identifier?.contact_id || null,
-        agent_user_id: userId,
-        direction,
-        twilio_call_sid: callSid,
-        phone_from: direction === 'outbound' ? process.env.NEXT_PUBLIC_TWILIO_PHONE || '' : phone,
-        phone_to: direction === 'outbound' ? phone : '',
-        duration_seconds: callDuration,
-        disposition,
-      })
-
-      // Log activity
-      await supabase.from('activity_log').insert({
-        tenant_id: tenantId,
-        user_id: userId,
-        action: direction === 'outbound' ? 'call_made' : 'call_received',
-        resource_type: 'call',
-        details: { phone, duration: callDuration, disposition },
+      await fetch('/api/twilio/log-call', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId,
+          direction,
+          phone,
+          callSid,
+          disposition,
+          duration: callDuration,
+        }),
       })
     } catch (err) {
       console.error('Failed to log call:', err)
