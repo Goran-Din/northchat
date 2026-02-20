@@ -14,7 +14,7 @@ const SoftphoneContext = createContext<SoftphoneContextValue | null>(null)
 
 export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
   const [dialNumber, setDialNumber] = useState('')
-  const [isSoftphoneOpen, setIsSoftphoneOpen] = useState(true)
+  const [isSoftphoneOpen, setIsSoftphoneOpen] = useState(false)
 
   const triggerCall = useCallback((number: string) => {
     setDialNumber(number)

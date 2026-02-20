@@ -1,7 +1,9 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import { Search, Plus, Phone, MessageSquare, Mail, StickyNote, ArrowDownLeft, ArrowUpRight, X, User, Building, Tag, Clock, Send, Pencil, Trash2, MapPin } from 'lucide-react'
+import { useSoftphone } from '@/contexts/SoftphoneContext'
 
 // Types
 interface ContactIdentifier {
@@ -65,6 +67,8 @@ function getTypeColor(index: number) {
 }
 
 export default function ContactsPage() {
+  const router = useRouter()
+  const { triggerCall } = useSoftphone()
   const [contacts, setContacts] = useState<Contact[]>([])
   const [contactTypes, setContactTypes] = useState<ContactType[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -94,6 +98,52 @@ export default function ContactsPage() {
   const [formZip, setFormZip] = useState('')
   const [formCustomLabel, setFormCustomLabel] = useState('')
   const [formCustomValue, setFormCustomValue] = useState('')
+
+  // Panel resize state
+  const [panelWidth, setPanelWidth] = useState(400)
+  const [isResizing, setIsResizing] = useState(false)
+  const resizeStartX = useRef(0)
+  const resizeStartW = useRef(400)
+
+  // Load saved panel width from localStorage
+  useEffect(() => {
+    const stored = localStorage.getItem('northchat-contact-panel-width')
+    if (stored) {
+      const w = parseInt(stored, 10)
+      if (w >= 350 && w <= 700) setPanelWidth(w)
+    }
+  }, [])
+
+  // Resize drag handler
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    setIsResizing(true)
+    resizeStartX.current = e.clientX
+    resizeStartW.current = panelWidth
+  }, [panelWidth])
+
+  useEffect(() => {
+    if (!isResizing) return
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const delta = resizeStartX.current - e.clientX
+      const maxW = Math.min(700, window.innerWidth * 0.6)
+      const newW = Math.max(350, Math.min(resizeStartW.current + delta, maxW))
+      setPanelWidth(newW)
+    }
+
+    const handleMouseUp = () => {
+      setIsResizing(false)
+      localStorage.setItem('northchat-contact-panel-width', String(Math.round(panelWidth)))
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [isResizing, panelWidth])
 
   const selected = contacts.find((c) => c.id === selectedId) || null
 
@@ -128,6 +178,17 @@ export default function ContactsPage() {
       loadTimeline(selectedId)
     }
   }, [selectedId])
+
+  // Close panel on Escape key
+  useEffect(() => {
+    function handleEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape' && selectedId && !showAddModal && !showEditModal && !showDeleteConfirm) {
+        setSelectedId(null)
+      }
+    }
+    document.addEventListener('keydown', handleEscape)
+    return () => document.removeEventListener('keydown', handleEscape)
+  }, [selectedId, showAddModal, showEditModal, showDeleteConfirm])
 
   async function loadContacts() {
     try {
@@ -328,6 +389,47 @@ export default function ContactsPage() {
     setFormCustomValue('')
   }
 
+  function getContactPhone(contact: Contact): string | null {
+    const primary = contact.contact_identifiers?.find(
+      (i) => i.identifier_type === 'phone' && i.is_primary
+    )
+    if (primary) return primary.identifier_value
+    const any = contact.contact_identifiers?.find((i) => i.identifier_type === 'phone')
+    return any?.identifier_value || null
+  }
+
+  function getContactEmail(contact: Contact): string | null {
+    const primary = contact.contact_identifiers?.find(
+      (i) => i.identifier_type === 'email' && i.is_primary
+    )
+    if (primary) return primary.identifier_value
+    const any = contact.contact_identifiers?.find((i) => i.identifier_type === 'email')
+    return any?.identifier_value || null
+  }
+
+  function handleCall() {
+    if (!selected) return
+    const phone = getContactPhone(selected)
+    if (!phone) { alert('This contact has no phone number.'); return }
+    triggerCall(phone)
+  }
+
+  function handleSms() {
+    if (!selected) return
+    const phone = getContactPhone(selected)
+    if (!phone) { alert('This contact has no phone number.'); return }
+    const params = new URLSearchParams({ phone })
+    params.set('name', selected.display_name)
+    router.push(`/dashboard/messages?${params.toString()}`)
+  }
+
+  function handleEmail() {
+    if (!selected) return
+    const email = getContactEmail(selected)
+    if (!email) { alert('This contact has no email address.'); return }
+    window.open(`mailto:${email}`)
+  }
+
   function formatPhone(phone: string): string {
     const digits = phone.replace(/\D/g, '')
     if (digits.length === 11 && digits.startsWith('1')) {
@@ -367,9 +469,9 @@ export default function ContactsPage() {
   })
 
   return (
-    <div className="flex h-[calc(100vh-64px)] bg-white">
+    <div className="h-[calc(100vh-64px)] bg-white">
       {/* Left Panel - Contact List */}
-      <div className={`w-96 border-r border-gray-200 flex flex-col ${selectedId && 'hidden md:flex'}`}>
+      <div className="h-full flex flex-col">
         {/* Header */}
         <div className="p-4 border-b border-gray-200 flex items-center justify-between">
           <h2 className="text-xl font-bold text-gray-900">Contacts</h2>
@@ -490,18 +592,36 @@ export default function ContactsPage() {
         </div>
       </div>
 
-      {/* Right Panel - Contact Detail */}
-      {selected ? (
-        <div className="flex-1 flex flex-col overflow-hidden">
+      {/* Slide-over backdrop */}
+      {selectedId && (
+        <div
+          className="fixed inset-0 bg-black/30 z-40 transition-opacity duration-200"
+          onClick={() => setSelectedId(null)}
+        />
+      )}
+
+      {/* Slide-over detail panel */}
+      <div
+        className={`fixed top-0 right-0 h-full z-40 w-full md:w-[var(--panel-w)] bg-white shadow-2xl border-l border-gray-200 transform flex flex-col overflow-hidden ${
+          isResizing ? '' : 'transition-transform duration-200 ease-in-out'
+        } ${
+          selectedId ? 'translate-x-0' : 'translate-x-full'
+        }`}
+        style={{ '--panel-w': `${panelWidth}px` } as React.CSSProperties}
+      >
+        {/* Resize handle (desktop only) */}
+        <div
+          onMouseDown={handleResizeStart}
+          className="hidden md:flex absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize items-center justify-center z-10 group"
+        >
+          <div className="w-0.5 h-8 rounded-full bg-gray-300 opacity-0 group-hover:opacity-100 transition-opacity" />
+        </div>
+
+        {selected && (
+          <>
           {/* Detail Header */}
           <div className="p-5 border-b border-gray-200 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <button
-                onClick={() => setSelectedId(null)}
-                className="md:hidden p-1 text-gray-500 hover:text-gray-700"
-              >
-                <X className="w-5 h-5" />
-              </button>
               <div className="w-12 h-12 rounded-xl bg-blue-600 flex items-center justify-center text-white text-lg font-bold">
                 {selected.display_name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()}
               </div>
@@ -543,6 +663,14 @@ export default function ContactsPage() {
               >
                 <Trash2 className="w-4 h-4" />
               </button>
+              <div className="w-px h-5 bg-gray-200 mx-0.5" />
+              <button
+                onClick={() => setSelectedId(null)}
+                className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                title="Close panel"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
           </div>
 
@@ -550,16 +678,25 @@ export default function ContactsPage() {
           <div className="px-5 py-3 border-b border-gray-200 flex gap-2">
             {selected.contact_identifiers?.some((i) => i.identifier_type === 'phone') && (
               <>
-                <button className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+                <button
+                  onClick={handleCall}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                >
                   <Phone className="w-4 h-4" /> Call
                 </button>
-                <button className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+                <button
+                  onClick={handleSms}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                >
                   <MessageSquare className="w-4 h-4" /> SMS
                 </button>
               </>
             )}
             {selected.contact_identifiers?.some((i) => i.identifier_type === 'email') && (
-              <button className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+              <button
+                onClick={handleEmail}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+              >
                 <Mail className="w-4 h-4" /> Email
               </button>
             )}
@@ -734,16 +871,9 @@ export default function ContactsPage() {
               )}
             </div>
           </div>
-        </div>
-      ) : (
-        <div className="flex-1 flex items-center justify-center text-gray-400">
-          <div className="text-center">
-            <User className="w-16 h-16 mx-auto mb-4 text-gray-300" />
-            <h3 className="text-lg font-semibold text-gray-500">Select a contact</h3>
-            <p className="text-sm mt-1">Choose from the list to view details and activity</p>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </div>
 
       {/* Add/Edit Contact Modal */}
       {(showAddModal || showEditModal) && (
