@@ -38,6 +38,7 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
   const wasDragged = useRef(false)
   const isExpandedRef = useRef(isExpanded)
   isExpandedRef.current = isExpanded
+  const prevExpandedRef = useRef(isExpanded)
 
   const timerRef = useRef<NodeJS.Timeout | null>(null)
   const callStartRef = useRef<Date | null>(null)
@@ -81,6 +82,31 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
       setIsExpanded(true)
     }
   }, [callState, setIsExpanded])
+
+  // Adjust position when toggling between pill and expanded panel
+  // so the bottom edge stays anchored in the same spot
+  useEffect(() => {
+    if (!posInitialized.current) return
+
+    const PANEL_H = 480
+    const PILL_H = 44
+
+    if (isExpanded && !prevExpandedRef.current) {
+      // Expanding: shift up so panel bottom aligns with pill bottom
+      setPosition(prev => ({
+        x: prev.x,
+        y: Math.max(10, prev.y - PANEL_H + PILL_H),
+      }))
+    } else if (!isExpanded && prevExpandedRef.current) {
+      // Collapsing: shift down so pill sits at panel's former bottom
+      setPosition(prev => ({
+        x: prev.x,
+        y: Math.min(prev.y + PANEL_H - PILL_H, window.innerHeight - PILL_H),
+      }))
+    }
+
+    prevExpandedRef.current = isExpanded
+  }, [isExpanded])
 
   // React to external dial number from context — set number and flag for auto-dial
   useEffect(() => {
