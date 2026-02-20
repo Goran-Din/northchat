@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Device, Call } from '@twilio/voice-sdk'
+import { useSoftphone } from '@/contexts/SoftphoneContext'
 
 interface SoftphoneProps {
   userId: string
@@ -9,6 +10,7 @@ interface SoftphoneProps {
 }
 
 export function Softphone({ userId, tenantId }: SoftphoneProps) {
+  const { dialNumber, setDialNumber } = useSoftphone()
   const [device, setDevice] = useState<Device | null>(null)
   const [activeCall, setActiveCall] = useState<Call | null>(null)
   const [callState, setCallState] = useState<'idle' | 'connecting' | 'ringing' | 'connected' | 'incoming'>('idle')
@@ -22,6 +24,17 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
 
   const timerRef = useRef<NodeJS.Timeout | null>(null)
   const callStartRef = useRef<Date | null>(null)
+  const pendingDialRef = useRef(false)
+
+  // React to external dial number from context — set number and flag for auto-dial
+  useEffect(() => {
+    if (dialNumber) {
+      setPhoneNumber(dialNumber)
+      setShowDialpad(true)
+      pendingDialRef.current = true
+      setDialNumber('')
+    }
+  }, [dialNumber, setDialNumber])
 
   // Initialize Twilio Device
   const initDevice = useCallback(async () => {
@@ -191,6 +204,14 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
       setCallState('idle')
     }
   }
+
+  // Auto-initiate call once phoneNumber is set from triggerCall
+  useEffect(() => {
+    if (pendingDialRef.current && phoneNumber && deviceReady && callState === 'idle' && device) {
+      pendingDialRef.current = false
+      makeCall()
+    }
+  }) // intentionally no deps — runs every render to catch state settling
 
   // Accept incoming call
   const acceptCall = () => {

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Send, MessageSquare, Plus, ArrowLeft, Phone } from 'lucide-react'
 
@@ -25,6 +26,8 @@ interface Conversation {
 
 export default function MessagesPage() {
   const supabase = createClient()
+  const searchParams = useSearchParams()
+  const router = useRouter()
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null)
   const [messages, setMessages] = useState<SmsMessage[]>([])
@@ -33,8 +36,51 @@ export default function MessagesPage() {
   const [showNewConversation, setShowNewConversation] = useState(false)
   const [sending, setSending] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [contactLabel, setContactLabel] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const twilioNumber = process.env.NEXT_PUBLIC_TWILIO_PHONE_NUMBER || ''
+  const appliedParams = useRef(false)
+
+  // Handle ?phone= and ?name= query params
+  useEffect(() => {
+    if (appliedParams.current) return
+    const phone = searchParams.get('phone')
+    const name = searchParams.get('name')
+
+    if (phone) {
+      appliedParams.current = true
+
+      // Format the number to match conversation keys
+      let formatted = phone.replace(/\D/g, '')
+      if (formatted.length === 10) formatted = `+1${formatted}`
+      else if (formatted.length === 11 && formatted.startsWith('1')) formatted = `+${formatted}`
+      else if (!formatted.startsWith('+')) formatted = `+${formatted}`
+
+      if (name) setContactLabel(name)
+
+      // After conversations load, try to select existing or start new
+      // We set these immediately; the conversation load effect will handle the rest
+      setNewConversationNumber(formatted)
+      setShowNewConversation(true)
+      setSelectedConversation(null)
+
+      // Clear URL params
+      router.replace('/dashboard/messages')
+    }
+  }, [searchParams, router])
+
+  // When conversations finish loading, check if the pre-filled number has an existing conversation
+  useEffect(() => {
+    if (!loading && newConversationNumber && showNewConversation && conversations.length > 0) {
+      const existing = conversations.find((c) => c.phone_number === newConversationNumber)
+      if (existing) {
+        setShowNewConversation(false)
+        setSelectedConversation(existing.phone_number)
+        setNewConversationNumber('')
+        loadMessages(existing.phone_number)
+      }
+    }
+  }, [loading, conversations, newConversationNumber, showNewConversation])
 
   // Load conversations on mount
   useEffect(() => {
@@ -178,6 +224,7 @@ export default function MessagesPage() {
   function selectConversation(phoneNumber: string) {
     setSelectedConversation(phoneNumber)
     setShowNewConversation(false)
+    setContactLabel(null)
     loadMessages(phoneNumber)
   }
 
@@ -288,7 +335,9 @@ export default function MessagesPage() {
                 <ArrowLeft className="w-5 h-5" />
               </button>
               <div className="flex-1">
-                <label className="text-sm text-gray-500 block mb-1">To:</label>
+                <label className="text-sm text-gray-500 block mb-1">
+                  To:{contactLabel && <span className="ml-1 font-medium text-gray-700">{contactLabel}</span>}
+                </label>
                 <input
                   type="tel"
                   placeholder="Enter phone number (e.g. 6305551234)"
@@ -346,9 +395,11 @@ export default function MessagesPage() {
               </div>
               <div>
                 <h3 className="font-semibold text-gray-900">
-                  {formatPhoneNumber(selectedConversation)}
+                  {contactLabel || formatPhoneNumber(selectedConversation)}
                 </h3>
-                <p className="text-xs text-gray-400">SMS Conversation</p>
+                <p className="text-xs text-gray-400">
+                  {contactLabel ? formatPhoneNumber(selectedConversation) : 'SMS Conversation'}
+                </p>
               </div>
             </div>
 

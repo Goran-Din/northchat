@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Softphone } from '@/components/softphone/softphone'
+import { useSoftphone } from '@/contexts/SoftphoneContext'
 import type { User } from '@supabase/supabase-js'
 
 interface DashboardShellProps {
@@ -24,7 +25,7 @@ const navigation = [
 export function DashboardShell({ user, profile, children }: DashboardShellProps) {
   const pathname = usePathname()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [phoneOpen, setPhoneOpen] = useState(true)
+  const { isSoftphoneOpen: phoneOpen, setIsSoftphoneOpen: setPhoneOpen } = useSoftphone()
   const supabase = createClient()
 
   const handleSignOut = async () => {

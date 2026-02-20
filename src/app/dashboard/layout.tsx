@@ -1,6 +1,7 @@
 import { createServerSupabase } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { DashboardShell } from '@/components/layout/dashboard-shell'
+import { SoftphoneProvider } from '@/contexts/SoftphoneContext'
 
 export default async function DashboardLayout({
   children,
@@ -25,8 +26,10 @@ export default async function DashboardLayout({
     .single()
 
   return (
-    <DashboardShell user={user} profile={profile}>
-      {children}
-    </DashboardShell>
+    <SoftphoneProvider>
+      <DashboardShell user={user} profile={profile}>
+        {children}
+      </DashboardShell>
+    </SoftphoneProvider>
   )
 }
