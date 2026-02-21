@@ -9,85 +9,133 @@ interface SoftphoneProps {
   tenantId: string
 }
 
-// Generate a phone ringtone using Web Audio API
+// Generate a WAV ringtone as a data URI (two-tone phone ring)
+function generateRingtoneWav(): string {
+  const sampleRate = 22050
+  const ringDuration = 1.5
+  const silenceDuration = 1.5
+  const cycles = 3
+  const totalSamples = Math.floor(sampleRate * (ringDuration + silenceDuration) * cycles)
+
+  const buffer = new ArrayBuffer(44 + totalSamples * 2)
+  const view = new DataView(buffer)
+
+  const writeString = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i++) {
+      view.setUint8(offset + i, str.charCodeAt(i))
+    }
+  }
+  writeString(0, 'RIFF')
+  view.setUint32(4, 36 + totalSamples * 2, true)
+  writeString(8, 'WAVE')
+  writeString(12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true)
+  view.setUint16(22, 1, true)
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * 2, true)
+  view.setUint16(32, 2, true)
+  view.setUint16(34, 16, true)
+  writeString(36, 'data')
+  view.setUint32(40, totalSamples * 2, true)
+
+  const ringSamples = Math.floor(sampleRate * ringDuration)
+  const cycleSamples = Math.floor(sampleRate * (ringDuration + silenceDuration))
+
+  for (let i = 0; i < totalSamples; i++) {
+    const posInCycle = i % cycleSamples
+    let sample = 0
+
+    if (posInCycle < ringSamples) {
+      const t = posInCycle / sampleRate
+      const tone1 = Math.sin(2 * Math.PI * 440 * t)
+      const tone2 = Math.sin(2 * Math.PI * 480 * t)
+      sample = (tone1 + tone2) * 0.25 * 32767
+
+      const fadeLen = sampleRate * 0.02
+      if (posInCycle < fadeLen) {
+        sample *= posInCycle / fadeLen
+      } else if (posInCycle > ringSamples - fadeLen) {
+        sample *= (ringSamples - posInCycle) / fadeLen
+      }
+    }
+
+    view.setInt16(44 + i * 2, Math.max(-32768, Math.min(32767, sample)), true)
+  }
+
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return 'data:audio/wav;base64,' + btoa(binary)
+}
+
 function createRingtone() {
-  let audioContext: AudioContext | null = null
-  let oscillator1: OscillatorNode | null = null
-  let oscillator2: OscillatorNode | null = null
-  let gainNode: GainNode | null = null
-  let intervalId: NodeJS.Timeout | null = null
+  let audio: HTMLAudioElement | null = null
   let isPlaying = false
+  let unlocked = false
+
+  const init = () => {
+    if (audio) return
+    try {
+      audio = new Audio()
+      audio.loop = true
+      audio.volume = 0.7
+      audio.src = generateRingtoneWav()
+      audio.load()
+    } catch (err) {
+      console.error('Failed to create ringtone audio:', err)
+    }
+  }
+
+  const unlock = () => {
+    if (unlocked || !audio) return
+    const playPromise = audio.play()
+    if (playPromise) {
+      playPromise.then(() => {
+        audio!.pause()
+        audio!.currentTime = 0
+        unlocked = true
+        console.log('Ringtone audio unlocked')
+      }).catch(() => {})
+    }
+  }
+
+  if (typeof document !== 'undefined') {
+    const handleInteraction = () => {
+      init()
+      unlock()
+      if (unlocked) {
+        document.removeEventListener('click', handleInteraction)
+        document.removeEventListener('keydown', handleInteraction)
+        document.removeEventListener('touchstart', handleInteraction)
+      }
+    }
+    document.addEventListener('click', handleInteraction)
+    document.addEventListener('keydown', handleInteraction)
+    document.addEventListener('touchstart', handleInteraction)
+    init()
+  }
 
   const start = () => {
-    if (isPlaying) return
+    if (isPlaying || !audio) return
     isPlaying = true
-
-    try {
-      audioContext = new AudioContext()
-      gainNode = audioContext.createGain()
-      gainNode.connect(audioContext.destination)
-      gainNode.gain.value = 0
-
-      // Classic phone ring: two tones mixed together
-      oscillator1 = audioContext.createOscillator()
-      oscillator1.type = 'sine'
-      oscillator1.frequency.value = 440 // A4
-      oscillator1.connect(gainNode)
-      oscillator1.start()
-
-      oscillator2 = audioContext.createOscillator()
-      oscillator2.type = 'sine'
-      oscillator2.frequency.value = 480 // slightly higher
-      oscillator2.connect(gainNode)
-      oscillator2.start()
-
-      // Ring pattern: 2 seconds on, 4 seconds off
-      let ringOn = true
-      const toggleRing = () => {
-        if (!gainNode) return
-        gainNode.gain.setValueAtTime(ringOn ? 0.3 : 0, audioContext!.currentTime)
-        ringOn = !ringOn
-      }
-
-      // Start with ring on
-      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime)
-      intervalId = setInterval(toggleRing, ringOn ? 2000 : 4000)
-
-      // Use a more reliable ring pattern
-      if (intervalId) clearInterval(intervalId)
-      
-      const ringCycle = () => {
-        if (!isPlaying || !gainNode || !audioContext) return
-        // Ring for 2 seconds
-        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime)
-        // Silence after 2 seconds
-        gainNode.gain.setValueAtTime(0, audioContext.currentTime + 2)
-        // Schedule next ring cycle
-        intervalId = setTimeout(ringCycle, 4000)
-      }
-      ringCycle()
-    } catch (err) {
-      console.error('Failed to create ringtone:', err)
+    audio.currentTime = 0
+    const playPromise = audio.play()
+    if (playPromise) {
+      playPromise.catch(err => {
+        console.error('Ringtone play failed:', err)
+      })
     }
   }
 
   const stop = () => {
     isPlaying = false
-    if (intervalId) {
-      clearTimeout(intervalId)
-      intervalId = null
+    if (audio) {
+      audio.pause()
+      audio.currentTime = 0
     }
-    try {
-      oscillator1?.stop()
-      oscillator2?.stop()
-      audioContext?.close()
-    } catch {
-      // ignore errors on cleanup
-    }
-    oscillator1 = null
-    oscillator2 = null
-    gainNode = null
-    audioContext = null
   }
 
   return { start, stop }
@@ -112,7 +160,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
   const [incomingFrom, setIncomingFrom] = useState('')
   const [showDialpad, setShowDialpad] = useState(true)
 
-  // Drag/position state
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [isDragging, setIsDragging] = useState(false)
   const dragOffset = useRef({ x: 0, y: 0 })
@@ -129,7 +176,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
   const pendingDialRef = useRef(false)
   const ringtoneRef = useRef<{ start: () => void; stop: () => void } | null>(null)
 
-  // Initialize ringtone on mount
   useEffect(() => {
     ringtoneRef.current = createRingtone()
     return () => {
@@ -137,14 +183,12 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
     }
   }, [])
 
-  // Play/stop ringtone based on call state
   useEffect(() => {
     if (callState === 'incoming') {
       ringtoneRef.current?.start()
-      // Also flash the browser tab title
       const originalTitle = document.title
       const flashInterval = setInterval(() => {
-        document.title = document.title === '📞 Incoming Call!' ? originalTitle : '📞 Incoming Call!'
+        document.title = document.title === '\uD83D\uDCDE Incoming Call!' ? originalTitle : '\uD83D\uDCDE Incoming Call!'
       }, 1000)
       return () => {
         clearInterval(flashInterval)
@@ -156,7 +200,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
     }
   }, [callState])
 
-  // Calculate default position (bottom-left corner)
   const getDefaultPosition = useCallback(() => ({
     x: 20,
     y: isExpandedRef.current
@@ -164,7 +207,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
       : Math.max(8, window.innerHeight - 60),
   }), [])
 
-  // Set initial position on mount (client-side only)
   useEffect(() => {
     if (!posInitialized.current) {
       posInitialized.current = true
@@ -172,7 +214,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
     }
   }, [getDefaultPosition])
 
-  // Reset position on window resize (debounced 200ms)
   useEffect(() => {
     let timer: NodeJS.Timeout
     const handleResize = () => {
@@ -188,15 +229,12 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
     }
   }, [getDefaultPosition])
 
-  // Auto-expand when a call is active or incoming
   useEffect(() => {
     if (callState !== 'idle') {
       setIsExpanded(true)
     }
   }, [callState, setIsExpanded])
 
-  // Adjust position when toggling between pill and expanded panel
-  // so the bottom edge stays anchored in the same spot
   useEffect(() => {
     if (!posInitialized.current) return
 
@@ -204,13 +242,11 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
     const PILL_H = 44
 
     if (isExpanded && !prevExpandedRef.current) {
-      // Expanding: shift up so panel bottom aligns with pill bottom
       setPosition(prev => ({
         x: prev.x,
         y: Math.max(10, prev.y - PANEL_H + PILL_H),
       }))
     } else if (!isExpanded && prevExpandedRef.current) {
-      // Collapsing: shift down so pill sits at panel's former bottom
       setPosition(prev => ({
         x: prev.x,
         y: Math.min(prev.y + PANEL_H - PILL_H, window.innerHeight - PILL_H),
@@ -220,7 +256,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
     prevExpandedRef.current = isExpanded
   }, [isExpanded])
 
-  // React to external dial number from context — set number and flag for auto-dial
   useEffect(() => {
     if (dialNumber) {
       setPhoneNumber(dialNumber)
@@ -230,7 +265,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
     }
   }, [dialNumber, setDialNumber])
 
-  // Initialize Twilio Device
   const initDevice = useCallback(async () => {
     try {
       setError(null)
@@ -295,7 +329,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Call timer
   useEffect(() => {
     if (callState === 'connected') {
       callStartRef.current = new Date()
@@ -320,14 +353,12 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
     }
   }, [callState])
 
-  // Format duration as mm:ss
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
     const secs = seconds % 60
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
   }
 
-  // Log call to database
   const logCall = async (direction: string, phone: string, callSid: string, disposition: string) => {
     try {
       await fetch('/api/twilio/log-call', {
@@ -347,7 +378,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
     }
   }
 
-  // Make outgoing call
   const makeCall = async () => {
     if (!device || !phoneNumber.trim()) return
 
@@ -355,7 +385,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
       setCallState('connecting')
       setError(null)
 
-      // Format number - add +1 if not already formatted
       let formattedNumber = phoneNumber.replace(/\D/g, '')
       if (formattedNumber.length === 10) {
         formattedNumber = `+1${formattedNumber}`
@@ -399,15 +428,13 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
     }
   }
 
-  // Auto-initiate call once phoneNumber is set from triggerCall
   useEffect(() => {
     if (pendingDialRef.current && phoneNumber && deviceReady && callState === 'idle' && device) {
       pendingDialRef.current = false
       makeCall()
     }
-  }) // intentionally no deps — runs every render to catch state settling
+  }) // intentionally no deps
 
-  // Accept incoming call
   const acceptCall = () => {
     if (activeCall) {
       activeCall.accept()
@@ -415,7 +442,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
     }
   }
 
-  // Reject incoming call
   const rejectCall = () => {
     if (activeCall) {
       activeCall.reject()
@@ -423,7 +449,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
     }
   }
 
-  // Hang up
   const hangUp = () => {
     if (activeCall) {
       activeCall.disconnect()
@@ -431,7 +456,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
     handleCallEnd()
   }
 
-  // Toggle mute
   const toggleMute = () => {
     if (activeCall) {
       const newMuted = !isMuted
@@ -440,7 +464,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
     }
   }
 
-  // Handle call end
   const handleCallEnd = () => {
     setCallState('idle')
     setActiveCall(null)
@@ -448,7 +471,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
     setIncomingFrom('')
   }
 
-  // Dial pad button press
   const dialpadPress = (digit: string) => {
     if (callState === 'connected' && activeCall) {
       activeCall.sendDigits(digit)
@@ -464,7 +486,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
     ['*', '0', '#'],
   ]
 
-  // Status color and text
   const getStatusDisplay = () => {
     switch (callState) {
       case 'idle': return { color: 'bg-green-500', text: 'Ready' }
@@ -479,7 +500,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
   const status = getStatusDisplay()
   const isInCall = callState !== 'idle'
 
-  // --- Drag handlers ---
   const handleDragStart = (e: React.MouseEvent) => {
     setIsDragging(true)
     dragOffset.current = {
@@ -523,7 +543,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
     }
   }, [isDragging, setIsExpanded])
 
-  // --- COMPACT PILL ---
   if (!isExpanded) {
     return (
       <div
@@ -540,14 +559,12 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
     )
   }
 
-  // --- EXPANDED PANEL ---
   return (
     <div
       ref={panelRef}
       className="fixed z-50 w-[320px] bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden"
       style={{ left: position.x, top: position.y }}
     >
-      {/* Draggable header */}
       <div
         className={`px-4 py-3 border-b border-gray-100 flex items-center justify-between select-none ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
         onMouseDown={handleDragStart}
@@ -575,9 +592,7 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
         </div>
       </div>
 
-      {/* Scrollable content area */}
       <div className="overflow-y-auto">
-        {/* Error display */}
         {error && (
           <div className="mx-4 mt-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600">
             {error}
@@ -585,7 +600,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
           </div>
         )}
 
-        {/* Incoming call alert */}
         {callState === 'incoming' && (
           <div className="p-4 bg-orange-50 border-b border-orange-200">
             <p className="text-sm font-medium text-orange-800 text-center">Incoming Call</p>
@@ -607,7 +621,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
           </div>
         )}
 
-        {/* Phone number input */}
         {callState !== 'incoming' && (
           <div className="p-4">
             <div className="relative">
@@ -637,7 +650,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
           </div>
         )}
 
-        {/* Dial pad */}
         {showDialpad && callState !== 'incoming' && (
           <div className="px-4 pb-2">
             <div className="grid grid-cols-3 gap-2">
@@ -656,7 +668,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
           </div>
         )}
 
-        {/* Toggle dialpad */}
         {callState !== 'incoming' && (
           <div className="px-4">
             <button
@@ -668,7 +679,6 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
           </div>
         )}
 
-        {/* Call controls */}
         <div className="p-4 pt-2">
           {callState === 'idle' ? (
             <button
