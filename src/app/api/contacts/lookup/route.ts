@@ -85,14 +85,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ contact: null })
     }
 
-    const contact = match.contacts as Record<string, unknown>
-    const contactType = contact.contact_types as Record<string, unknown> | null
+    const contactData = Array.isArray(match.contacts) ? match.contacts[0] : match.contacts
+    if (!contactData) {
+      return NextResponse.json({ contact: null })
+    }
+    const contactType = Array.isArray((contactData as Record<string, unknown>).contact_types)
+      ? ((contactData as Record<string, unknown>).contact_types as Record<string, unknown>[])[0]
+      : (contactData as Record<string, unknown>).contact_types as Record<string, unknown> | null
 
     return NextResponse.json({
       contact: {
-        id: contact.id,
-        display_name: contact.display_name,
-        company_name: contact.company_name,
+        id: (contactData as Record<string, unknown>).id,
+        display_name: (contactData as Record<string, unknown>).display_name,
+        company_name: (contactData as Record<string, unknown>).company_name,
         contact_type: contactType?.name || null,
       },
     })
