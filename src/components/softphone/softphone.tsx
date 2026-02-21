@@ -11,9 +11,9 @@ interface SoftphoneProps {
 
 // Generate a WAV ringtone as a data URI (two-tone phone ring)
 function generateRingtoneWav(): string {
-  const sampleRate = 22050
-  const ringDuration = 1.5
-  const silenceDuration = 1.5
+  const sampleRate = 44100
+  const ringDuration = 2.0
+  const silenceDuration = 2.0
   const cycles = 3
   const totalSamples = Math.floor(sampleRate * (ringDuration + silenceDuration) * cycles)
 
@@ -48,11 +48,15 @@ function generateRingtoneWav(): string {
 
     if (posInCycle < ringSamples) {
       const t = posInCycle / sampleRate
+      // Classic North American ring: 440 Hz + 480 Hz
       const tone1 = Math.sin(2 * Math.PI * 440 * t)
       const tone2 = Math.sin(2 * Math.PI * 480 * t)
-      sample = (tone1 + tone2) * 0.25 * 32767
+      // Add slight tremolo for a more natural phone ring feel
+      const tremolo = 0.8 + 0.2 * Math.sin(2 * Math.PI * 20 * t)
+      sample = (tone1 + tone2) * 0.2 * tremolo * 32767
 
-      const fadeLen = sampleRate * 0.02
+      // Fade in/out to avoid clicks
+      const fadeLen = sampleRate * 0.03
       if (posInCycle < fadeLen) {
         sample *= posInCycle / fadeLen
       } else if (posInCycle > ringSamples - fadeLen) {
@@ -141,6 +145,44 @@ function createRingtone() {
   return { start, stop }
 }
 
+// Request browser notification permission on load
+function requestNotificationPermission() {
+  if (typeof window !== 'undefined' && 'Notification' in window) {
+    if (Notification.permission === 'default') {
+      Notification.requestPermission().then(permission => {
+        console.log('Notification permission:', permission)
+      })
+    }
+  }
+}
+
+// Show a system-level browser notification for incoming call
+function showIncomingCallNotification(from: string): Notification | null {
+  if (typeof window === 'undefined' || !('Notification' in window)) return null
+  if (Notification.permission !== 'granted') return null
+
+  try {
+    const notification = new Notification('Incoming Call - NorthChat', {
+      body: `Call from ${from}`,
+      icon: '/favicon.ico',
+      tag: 'incoming-call', // Replaces previous notification with same tag
+      requireInteraction: true, // Stays visible until user interacts
+      silent: false,
+    })
+
+    // Click notification to focus NorthChat window
+    notification.onclick = () => {
+      window.focus()
+      notification.close()
+    }
+
+    return notification
+  } catch (err) {
+    console.error('Failed to show notification:', err)
+    return null
+  }
+}
+
 export function Softphone({ userId, tenantId }: SoftphoneProps) {
   const {
     dialNumber,
@@ -175,7 +217,14 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
   const callStartRef = useRef<Date | null>(null)
   const pendingDialRef = useRef(false)
   const ringtoneRef = useRef<{ start: () => void; stop: () => void } | null>(null)
+  const notificationRef = useRef<Notification | null>(null)
 
+  // Request notification permission on mount
+  useEffect(() => {
+    requestNotificationPermission()
+  }, [])
+
+  // Initialize ringtone on mount
   useEffect(() => {
     ringtoneRef.current = createRingtone()
     return () => {
@@ -183,22 +232,39 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
     }
   }, [])
 
+  // Play/stop ringtone and show/hide notification based on call state
   useEffect(() => {
     if (callState === 'incoming') {
+      // Start ringtone
       ringtoneRef.current?.start()
+
+      // Show browser notification (works even when in another app)
+      notificationRef.current = showIncomingCallNotification(incomingFrom)
+
+      // Flash the browser tab title
       const originalTitle = document.title
       const flashInterval = setInterval(() => {
         document.title = document.title === '\uD83D\uDCDE Incoming Call!' ? originalTitle : '\uD83D\uDCDE Incoming Call!'
       }, 1000)
+
       return () => {
         clearInterval(flashInterval)
         document.title = originalTitle
         ringtoneRef.current?.stop()
+        // Close notification when call state changes
+        if (notificationRef.current) {
+          notificationRef.current.close()
+          notificationRef.current = null
+        }
       }
     } else {
       ringtoneRef.current?.stop()
+      if (notificationRef.current) {
+        notificationRef.current.close()
+        notificationRef.current = null
+      }
     }
-  }, [callState])
+  }, [callState, incomingFrom])
 
   const getDefaultPosition = useCallback(() => ({
     x: 20,
