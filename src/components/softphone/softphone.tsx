@@ -201,6 +201,13 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
   const [error, setError] = useState<string | null>(null)
   const [incomingFrom, setIncomingFrom] = useState('')
   const [showDialpad, setShowDialpad] = useState(true)
+  const [callerContact, setCallerContact] = useState<{
+    id: string
+    display_name: string
+    company_name: string | null
+    contact_type: string | null
+  } | null>(null)
+  const [lookupLoading, setLookupLoading] = useState(false)
 
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [isDragging, setIsDragging] = useState(false)
@@ -363,10 +370,16 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
         setCallState('incoming')
         setIncomingFrom(call.parameters.From || 'Unknown')
 
+        // Look up contact info for the incoming caller
+        if (call.parameters.From) {
+          lookupContact(call.parameters.From)
+        }
+
         call.on('cancel', () => {
           setCallState('idle')
           setActiveCall(null)
           setIncomingFrom('')
+          setCallerContact(null)
         })
 
         call.on('disconnect', () => {
@@ -464,6 +477,9 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
 
       setActiveCall(call)
 
+      // Look up contact info for the outbound number
+      lookupContact(formattedNumber)
+
       call.on('accept', () => {
         setCallState('connected')
       })
@@ -535,7 +551,29 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
     setActiveCall(null)
     setIsMuted(false)
     setIncomingFrom('')
+    setCallerContact(null)
+    setLookupLoading(false)
   }
+
+  const lookupContact = useCallback(async (phone: string) => {
+    if (!phone) return
+    setLookupLoading(true)
+    try {
+      const res = await fetch('/api/contacts/lookup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, tenant_id: tenantId }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setCallerContact(data.contact || null)
+      }
+    } catch (err) {
+      console.error('Contact lookup failed:', err)
+    } finally {
+      setLookupLoading(false)
+    }
+  }, [tenantId])
 
   const dialpadPress = (digit: string) => {
     if (callState === 'connected' && activeCall) {
@@ -670,6 +708,23 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
           <div className="p-4 bg-orange-50 border-b border-orange-200">
             <p className="text-sm font-medium text-orange-800 text-center">Incoming Call</p>
             <p className="text-lg font-bold text-orange-900 text-center mt-1">{incomingFrom}</p>
+            {lookupLoading ? (
+              <p className="text-xs text-orange-600 text-center mt-1">Looking up contact...</p>
+            ) : callerContact ? (
+              <div className="mt-1 text-center">
+                <p className="text-sm font-semibold text-orange-900">{callerContact.display_name}</p>
+                {callerContact.company_name && (
+                  <p className="text-xs text-orange-700">{callerContact.company_name}</p>
+                )}
+                {callerContact.contact_type && (
+                  <span className="inline-block mt-0.5 text-xs px-2 py-0.5 bg-orange-200 text-orange-800 rounded-full">
+                    {callerContact.contact_type}
+                  </span>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-orange-600 text-center mt-1">Unknown caller</p>
+            )}
             <div className="flex gap-2 mt-3">
               <button
                 onClick={acceptCall}
@@ -713,6 +768,27 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
                 </button>
               )}
             </div>
+            {callState !== 'idle' && (
+              <div className="mt-2 text-center">
+                {lookupLoading ? (
+                  <p className="text-xs text-gray-500">Looking up contact...</p>
+                ) : callerContact ? (
+                  <div>
+                    <p className="text-sm font-semibold text-gray-800">{callerContact.display_name}</p>
+                    {callerContact.company_name && (
+                      <p className="text-xs text-gray-500">{callerContact.company_name}</p>
+                    )}
+                    {callerContact.contact_type && (
+                      <span className="inline-block mt-0.5 text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full">
+                        {callerContact.contact_type}
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-400">Unknown caller</p>
+                )}
+              </div>
+            )}
           </div>
         )}
 
