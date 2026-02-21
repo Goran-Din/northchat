@@ -64,6 +64,11 @@ interface CallForwarding {
   fallback_timeout: number
 }
 
+interface VoicemailSettings {
+  enabled: boolean
+  greeting_message: string
+}
+
 // ── Defaults ───────────────────────────────────────────────
 
 const DEFAULT_DAY: DaySchedule = { open: true, start: '09:00', end: '17:00' }
@@ -94,16 +99,27 @@ function getDefaultCallForwarding(): CallForwarding {
   }
 }
 
+function getDefaultVoicemail(): VoicemailSettings {
+  return {
+    enabled: true,
+    greeting_message: 'Thank you for calling. No one is available to take your call right now. Please leave a message after the beep.',
+  }
+}
+
 const TABS = [
   { key: 'business-hours', label: 'Business Hours' },
   { key: 'call-forwarding', label: 'Call Forwarding' },
-  { key: 'voicemail', label: 'Voicemail', disabled: true },
+  { key: 'voicemail', label: 'Voicemail' },
 ]
 
 // ── Helper: format phone for display ───────────────────────
 
 function formatPhoneDisplay(value: string): string {
-  const digits = value.replace(/\D/g, '')
+  let digits = value.replace(/\D/g, '')
+  // Strip leading country code 1 if present (e.g. +16309469321 → 6309469321)
+  if (digits.length === 11 && digits.startsWith('1')) {
+    digits = digits.slice(1)
+  }
   if (digits.length <= 3) return digits
   if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6, 10)}`
@@ -126,6 +142,14 @@ export default function SettingsPage() {
   const [cfSaving, setCfSaving] = useState(false)
   const [cfSaveStatus, setCfSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const [cfErrorMessage, setCfErrorMessage] = useState('')
+
+  // Voicemail state
+  const [voicemail, setVoicemail] = useState<VoicemailSettings>(getDefaultVoicemail())
+  const [vmLoading, setVmLoading] = useState(false)
+  const [vmLoaded, setVmLoaded] = useState(false)
+  const [vmSaving, setVmSaving] = useState(false)
+  const [vmSaveStatus, setVmSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
+  const [vmErrorMessage, setVmErrorMessage] = useState('')
 
   const [activeTab, setActiveTab] = useState('business-hours')
 
@@ -209,6 +233,33 @@ export default function SettingsPage() {
     }
   }
 
+  // ── Fetch voicemail (on tab switch) ──
+
+  const fetchVoicemail = useCallback(async () => {
+    if (vmLoaded) return
+    setVmLoading(true)
+    try {
+      const res = await fetch('/api/settings/voicemail')
+      if (res.ok) {
+        const data = await res.json()
+        if (data.voicemail) {
+          setVoicemail(data.voicemail)
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch voicemail settings:', err)
+    } finally {
+      setVmLoading(false)
+      setVmLoaded(true)
+    }
+  }, [vmLoaded])
+
+  useEffect(() => {
+    if (activeTab === 'voicemail') {
+      fetchVoicemail()
+    }
+  }, [activeTab, fetchVoicemail])
+
   // ── Save call forwarding ──
 
   const handleSaveCf = async () => {
@@ -237,6 +288,37 @@ export default function SettingsPage() {
       setCfSaveStatus('error')
     } finally {
       setCfSaving(false)
+    }
+  }
+
+  // ── Save voicemail ──
+
+  const handleSaveVm = async () => {
+    setVmSaving(true)
+    setVmSaveStatus('idle')
+    setVmErrorMessage('')
+
+    try {
+      const res = await fetch('/api/settings/voicemail', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voicemail }),
+      })
+
+      if (res.ok) {
+        setVmSaveStatus('success')
+        setTimeout(() => setVmSaveStatus('idle'), 3000)
+      } else {
+        const data = await res.json()
+        setVmErrorMessage(data.error || 'Failed to save')
+        setVmSaveStatus('error')
+      }
+    } catch (err) {
+      console.error('Failed to save voicemail settings:', err)
+      setVmErrorMessage('Network error')
+      setVmSaveStatus('error')
+    } finally {
+      setVmSaving(false)
     }
   }
 
@@ -301,22 +383,14 @@ export default function SettingsPage() {
           {TABS.map(tab => (
             <button
               key={tab.key}
-              onClick={() => !tab.disabled && setActiveTab(tab.key)}
+              onClick={() => setActiveTab(tab.key)}
               className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tab.key
                   ? 'border-blue-600 text-blue-600'
-                  : tab.disabled
-                    ? 'border-transparent text-gray-300 cursor-not-allowed'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
-              disabled={tab.disabled}
             >
               {tab.label}
-              {tab.disabled && (
-                <span className="ml-1.5 text-xs bg-gray-100 text-gray-400 px-1.5 py-0.5 rounded">
-                  Soon
-                </span>
-              )}
             </button>
           ))}
         </nav>
@@ -611,6 +685,102 @@ export default function SettingsPage() {
                   <li>
                     <strong>When disabled</strong> — unanswered calls skip the forwarding step and go directly
                     to voicemail.
+                  </li>
+                </ul>
+              </div>
+            </>
+          )}
+        </>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════
+          VOICEMAIL TAB
+          ═══════════════════════════════════════════════════════ */}
+      {activeTab === 'voicemail' && (
+        <>
+          {vmLoading ? (
+            <div className="flex items-center justify-center py-20">
+              <div className="text-gray-500 text-sm">Loading voicemail settings...</div>
+            </div>
+          ) : (
+            <>
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                {/* Enable toggle */}
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h2 className="text-lg font-semibold text-gray-900">Voicemail</h2>
+                    <p className="text-sm text-gray-500 mt-0.5">
+                      Record voicemail when calls go unanswered
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setVoicemail(prev => ({ ...prev, enabled: !prev.enabled }))}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      voicemail.enabled ? 'bg-blue-600' : 'bg-gray-300'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        voicemail.enabled ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {voicemail.enabled && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                      Voicemail Greeting
+                    </label>
+                    <p className="text-xs text-gray-400 mb-2">
+                      The message callers hear before the recording tone
+                    </p>
+                    <textarea
+                      value={voicemail.greeting_message}
+                      onChange={(e) => {
+                        if (e.target.value.length <= 500) {
+                          setVoicemail(prev => ({ ...prev, greeting_message: e.target.value }))
+                        }
+                      }}
+                      rows={4}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+                      placeholder="Enter your voicemail greeting message..."
+                    />
+                    <p className="mt-1.5 text-xs text-gray-400">
+                      {voicemail.greeting_message.length}/500 characters
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Save button */}
+              <div className="mt-6 flex items-center gap-3">
+                <button
+                  onClick={handleSaveVm}
+                  disabled={vmSaving}
+                  className="px-6 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {vmSaving ? 'Saving...' : 'Save Changes'}
+                </button>
+                {vmSaveStatus === 'success' && (
+                  <span className="text-sm text-green-600 font-medium">Settings saved successfully</span>
+                )}
+                {vmSaveStatus === 'error' && (
+                  <span className="text-sm text-red-600 font-medium">{vmErrorMessage || 'Failed to save'}</span>
+                )}
+              </div>
+
+              {/* Help section */}
+              <div className="mt-8 bg-blue-50 border border-blue-200 rounded-xl p-5">
+                <h3 className="text-sm font-semibold text-blue-900 mb-2">How voicemail works</h3>
+                <ul className="text-sm text-blue-800 space-y-1.5">
+                  <li>
+                    <strong>When enabled</strong> — callers who reach voicemail will hear your custom
+                    greeting followed by a recording tone. Recordings are saved to the call log.
+                  </li>
+                  <li>
+                    <strong>When disabled</strong> — unanswered calls will simply disconnect after
+                    the fallback timeout.
                   </li>
                 </ul>
               </div>
