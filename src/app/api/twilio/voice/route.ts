@@ -4,33 +4,6 @@ import { supabaseAdmin } from '@/lib/supabase/admin'
 
 const VoiceResponse = twilio.twiml.VoiceResponse
 
-// Check if current time is within business hours for a tenant
-function isWithinBusinessHours(businessHours: Record<string, any>, timezone: string): boolean {
-  try {
-    const now = new Date()
-    const options: Intl.DateTimeFormatOptions = { timeZone: timezone }
-
-    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
-    const localDate = new Date(now.toLocaleString('en-US', options))
-    const weekday = dayNames[localDate.getDay()]
-    const hours = localDate.getHours()
-    const minutes = localDate.getMinutes()
-    const currentTime = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
-
-    console.log('BH Check:', { weekday, currentTime, schedule: businessHours[weekday] })
-
-    const todaySchedule = businessHours[weekday]
-    if (!todaySchedule || !todaySchedule.is_open) {
-      return false
-    }
-
-    return currentTime >= todaySchedule.open && currentTime < todaySchedule.close
-  } catch (error) {
-    console.error('Error checking business hours:', error)
-    return true
-  }
-}
-
 export async function POST(request: NextRequest) {
   const formData = await request.formData()
   const to = formData.get('To') as string
@@ -69,10 +42,9 @@ export async function POST(request: NextRequest) {
     console.log('Inbound call from:', from)
 
     // Look up which tenant owns this phone number
-    // For now, use the first active tenant (we'll add multi-tenant phone routing later)
     const { data: tenants, error: tenantError } = await supabaseAdmin
       .from('tenants')
-      .select('id, business_hours, after_hours_message, after_hours_action, timezone')
+      .select('id')
       .eq('status', 'active')
       .limit(1)
 
@@ -87,44 +59,34 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    const duringBusinessHours = isWithinBusinessHours(
-      tenant.business_hours || {},
-      tenant.timezone || 'America/Chicago'
-    )
+    // Ring all available agents (no business hours check)
+    console.log('Ringing available agents for tenant:', tenant.id)
 
-    if (duringBusinessHours) {
-      // === BUSINESS HOURS FLOW ===
-      // Step 1: Ring all available agents for 15 seconds
-      console.log('Business hours - ringing available agents')
+    const { data: agents } = await supabaseAdmin
+      .from('agent_status')
+      .select('user_id')
+      .eq('tenant_id', tenant.id)
+      .eq('status', 'available')
 
-      const { data: agents } = await supabaseAdmin
-        .from('agent_status')
-        .select('user_id')
-        .eq('status', 'available')
+    if (agents && agents.length > 0) {
+      console.log(`Ringing ${agents.length} available agents`)
 
       const dial = twiml.dial({
-        timeout: 15,
+        timeout: 20,
         action: `${process.env.NEXT_PUBLIC_APP_URL}/api/twilio/call-fallback`,
         method: 'POST',
       })
 
-      if (agents && agents.length > 0) {
-        console.log(`Ringing ${agents.length} available agents`)
-        agents.forEach(agent => {
-          dial.client(agent.user_id)
-        })
-      } else {
-        console.log('No available agents, will fall through to manager')
-        dial.client('no-agents-online')
-      }
+      agents.forEach(agent => {
+        dial.client(agent.user_id)
+      })
     } else {
-      // === AFTER HOURS FLOW ===
-      console.log('After hours - sending to voicemail')
+      // No agents available — go straight to voicemail
+      console.log('No available agents — sending to voicemail')
 
-      const afterHoursMsg = tenant.after_hours_message ||
-        'Thank you for calling. Our office is currently closed. Please leave a message and we will return your call during business hours.'
-
-      twiml.say({ voice: 'Polly.Amy' }, afterHoursMsg)
+      twiml.say({ voice: 'Polly.Amy' },
+        'Thank you for calling Sunset Services. No one is available to take your call right now. Please leave a message after the beep.'
+      )
       twiml.record({
         maxLength: 120,
         transcribe: false,
