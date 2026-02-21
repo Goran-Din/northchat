@@ -123,6 +123,7 @@ export async function POST(request: NextRequest) {
     const settings = (tenant.settings as Record<string, unknown>) || {}
     const businessHours = settings.business_hours as BusinessHoursSettings | undefined
     const voicemailSettings = settings.voicemail as Record<string, unknown> | undefined
+    const callForwardingSettings = settings.call_forwarding as { enabled?: boolean; ring_timeout?: number } | undefined
 
     // Check business hours — if outside hours, go to voicemail
     if (businessHours && !isWithinBusinessHours(businessHours)) {
@@ -147,8 +148,10 @@ export async function POST(request: NextRequest) {
     if (agents && agents.length > 0) {
       console.log(`Ringing ${agents.length} available agents`)
 
+      const ringTimeout = callForwardingSettings?.ring_timeout || 20
+
       const dial = twiml.dial({
-        timeout: 20,
+        timeout: ringTimeout,
         action: `${process.env.NEXT_PUBLIC_APP_URL}/api/twilio/call-fallback`,
         method: 'POST',
       })

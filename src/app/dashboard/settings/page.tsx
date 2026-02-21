@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react'
 
+// ── Constants ──────────────────────────────────────────────
+
 const US_TIMEZONES = [
   { value: 'America/New_York', label: 'Eastern Time (ET)' },
   { value: 'America/Chicago', label: 'Central Time (CT)' },
@@ -21,6 +23,9 @@ const DAYS_OF_WEEK = [
   { key: 'sunday', label: 'Sunday' },
 ]
 
+const RING_TIMEOUT_OPTIONS = [10, 15, 20, 25, 30]
+const FALLBACK_TIMEOUT_OPTIONS = [15, 20, 25, 30, 35, 40]
+
 // Generate time options in 30-min increments
 function generateTimeOptions() {
   const options: { value: string; label: string }[] = []
@@ -38,6 +43,8 @@ function generateTimeOptions() {
 
 const TIME_OPTIONS = generateTimeOptions()
 
+// ── Types ──────────────────────────────────────────────────
+
 interface DaySchedule {
   open: boolean
   start: string
@@ -49,6 +56,15 @@ interface BusinessHours {
   timezone: string
   schedule: Record<string, DaySchedule>
 }
+
+interface CallForwarding {
+  enabled: boolean
+  fallback_number: string
+  ring_timeout: number
+  fallback_timeout: number
+}
+
+// ── Defaults ───────────────────────────────────────────────
 
 const DEFAULT_DAY: DaySchedule = { open: true, start: '09:00', end: '17:00' }
 const DEFAULT_CLOSED: DaySchedule = { open: false, start: '09:00', end: '17:00' }
@@ -69,19 +85,51 @@ function getDefaultBusinessHours(): BusinessHours {
   }
 }
 
+function getDefaultCallForwarding(): CallForwarding {
+  return {
+    enabled: false,
+    fallback_number: '',
+    ring_timeout: 20,
+    fallback_timeout: 25,
+  }
+}
+
 const TABS = [
-  { key: 'business-hours', label: 'Business Hours', active: true },
-  { key: 'call-forwarding', label: 'Call Forwarding', active: false },
-  { key: 'voicemail', label: 'Voicemail', active: false },
+  { key: 'business-hours', label: 'Business Hours' },
+  { key: 'call-forwarding', label: 'Call Forwarding' },
+  { key: 'voicemail', label: 'Voicemail', disabled: true },
 ]
 
+// ── Helper: format phone for display ───────────────────────
+
+function formatPhoneDisplay(value: string): string {
+  const digits = value.replace(/\D/g, '')
+  if (digits.length <= 3) return digits
+  if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6, 10)}`
+}
+
+// ── Component ──────────────────────────────────────────────
+
 export default function SettingsPage() {
+  // Business Hours state
   const [businessHours, setBusinessHours] = useState<BusinessHours>(getDefaultBusinessHours())
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
-  const [errorMessage, setErrorMessage] = useState('')
+  const [bhLoading, setBhLoading] = useState(true)
+  const [bhSaving, setBhSaving] = useState(false)
+  const [bhSaveStatus, setBhSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
+  const [bhErrorMessage, setBhErrorMessage] = useState('')
+
+  // Call Forwarding state
+  const [callForwarding, setCallForwarding] = useState<CallForwarding>(getDefaultCallForwarding())
+  const [cfLoading, setCfLoading] = useState(false)
+  const [cfLoaded, setCfLoaded] = useState(false)
+  const [cfSaving, setCfSaving] = useState(false)
+  const [cfSaveStatus, setCfSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
+  const [cfErrorMessage, setCfErrorMessage] = useState('')
+
   const [activeTab, setActiveTab] = useState('business-hours')
+
+  // ── Fetch business hours ──
 
   const fetchBusinessHours = useCallback(async () => {
     try {
@@ -95,7 +143,7 @@ export default function SettingsPage() {
     } catch (err) {
       console.error('Failed to fetch business hours:', err)
     } finally {
-      setLoading(false)
+      setBhLoading(false)
     }
   }, [])
 
@@ -103,10 +151,39 @@ export default function SettingsPage() {
     fetchBusinessHours()
   }, [fetchBusinessHours])
 
-  const handleSave = async () => {
-    setSaving(true)
-    setSaveStatus('idle')
-    setErrorMessage('')
+  // ── Fetch call forwarding (on tab switch) ──
+
+  const fetchCallForwarding = useCallback(async () => {
+    if (cfLoaded) return
+    setCfLoading(true)
+    try {
+      const res = await fetch('/api/settings/call-forwarding')
+      if (res.ok) {
+        const data = await res.json()
+        if (data.call_forwarding) {
+          setCallForwarding(data.call_forwarding)
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch call forwarding:', err)
+    } finally {
+      setCfLoading(false)
+      setCfLoaded(true)
+    }
+  }, [cfLoaded])
+
+  useEffect(() => {
+    if (activeTab === 'call-forwarding') {
+      fetchCallForwarding()
+    }
+  }, [activeTab, fetchCallForwarding])
+
+  // ── Save business hours ──
+
+  const handleSaveBh = async () => {
+    setBhSaving(true)
+    setBhSaveStatus('idle')
+    setBhErrorMessage('')
 
     try {
       const res = await fetch('/api/settings/business-hours', {
@@ -116,21 +193,54 @@ export default function SettingsPage() {
       })
 
       if (res.ok) {
-        setSaveStatus('success')
-        setTimeout(() => setSaveStatus('idle'), 3000)
+        setBhSaveStatus('success')
+        setTimeout(() => setBhSaveStatus('idle'), 3000)
       } else {
         const data = await res.json()
-        setErrorMessage(data.error || 'Failed to save')
-        setSaveStatus('error')
+        setBhErrorMessage(data.error || 'Failed to save')
+        setBhSaveStatus('error')
       }
     } catch (err) {
       console.error('Failed to save business hours:', err)
-      setErrorMessage('Network error')
-      setSaveStatus('error')
+      setBhErrorMessage('Network error')
+      setBhSaveStatus('error')
     } finally {
-      setSaving(false)
+      setBhSaving(false)
     }
   }
+
+  // ── Save call forwarding ──
+
+  const handleSaveCf = async () => {
+    setCfSaving(true)
+    setCfSaveStatus('idle')
+    setCfErrorMessage('')
+
+    try {
+      const res = await fetch('/api/settings/call-forwarding', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ call_forwarding: callForwarding }),
+      })
+
+      if (res.ok) {
+        setCfSaveStatus('success')
+        setTimeout(() => setCfSaveStatus('idle'), 3000)
+      } else {
+        const data = await res.json()
+        setCfErrorMessage(data.error || 'Failed to save')
+        setCfSaveStatus('error')
+      }
+    } catch (err) {
+      console.error('Failed to save call forwarding:', err)
+      setCfErrorMessage('Network error')
+      setCfSaveStatus('error')
+    } finally {
+      setCfSaving(false)
+    }
+  }
+
+  // ── Business hours helpers ──
 
   const updateDay = (dayKey: string, field: keyof DaySchedule, value: string | boolean) => {
     setBusinessHours(prev => ({
@@ -159,7 +269,17 @@ export default function SettingsPage() {
     }))
   }
 
-  if (loading) {
+  // ── Call forwarding helpers ──
+
+  const handlePhoneChange = (value: string) => {
+    // Strip to digits only, max 10
+    const digits = value.replace(/\D/g, '').slice(0, 10)
+    setCallForwarding(prev => ({ ...prev, fallback_number: digits }))
+  }
+
+  // ── Loading state ──
+
+  if (bhLoading) {
     return (
       <div className="flex items-center justify-center py-20">
         <div className="text-gray-500 text-sm">Loading settings...</div>
@@ -181,18 +301,18 @@ export default function SettingsPage() {
           {TABS.map(tab => (
             <button
               key={tab.key}
-              onClick={() => tab.active && setActiveTab(tab.key)}
+              onClick={() => !tab.disabled && setActiveTab(tab.key)}
               className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tab.key
                   ? 'border-blue-600 text-blue-600'
-                  : tab.active
-                    ? 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                    : 'border-transparent text-gray-300 cursor-not-allowed'
+                  : tab.disabled
+                    ? 'border-transparent text-gray-300 cursor-not-allowed'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
-              disabled={!tab.active}
+              disabled={tab.disabled}
             >
               {tab.label}
-              {!tab.active && (
+              {tab.disabled && (
                 <span className="ml-1.5 text-xs bg-gray-100 text-gray-400 px-1.5 py-0.5 rounded">
                   Soon
                 </span>
@@ -202,9 +322,11 @@ export default function SettingsPage() {
         </nav>
       </div>
 
+      {/* ═══════════════════════════════════════════════════════
+          BUSINESS HOURS TAB
+          ═══════════════════════════════════════════════════════ */}
       {activeTab === 'business-hours' && (
         <>
-          {/* Business Hours card */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             {/* Enable toggle */}
             <div className="flex items-center justify-between mb-6">
@@ -270,14 +392,12 @@ export default function SettingsPage() {
                             : 'border-gray-100 bg-gray-50'
                         }`}
                       >
-                        {/* Day label */}
                         <span className={`text-sm font-medium w-24 flex-shrink-0 ${
                           schedule.open ? 'text-gray-900' : 'text-gray-400'
                         }`}>
                           {day.label}
                         </span>
 
-                        {/* Open/Closed toggle */}
                         <button
                           onClick={() => updateDay(day.key, 'open', !schedule.open)}
                           className={`text-xs font-medium px-2.5 py-1 rounded-full flex-shrink-0 ${
@@ -289,7 +409,6 @@ export default function SettingsPage() {
                           {schedule.open ? 'Open' : 'Closed'}
                         </button>
 
-                        {/* Time dropdowns */}
                         {schedule.open && (
                           <div className="flex items-center gap-2 ml-auto">
                             <select
@@ -324,17 +443,17 @@ export default function SettingsPage() {
           {/* Save button */}
           <div className="mt-6 flex items-center gap-3">
             <button
-              onClick={handleSave}
-              disabled={saving}
+              onClick={handleSaveBh}
+              disabled={bhSaving}
               className="px-6 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {saving ? 'Saving...' : 'Save Changes'}
+              {bhSaving ? 'Saving...' : 'Save Changes'}
             </button>
-            {saveStatus === 'success' && (
+            {bhSaveStatus === 'success' && (
               <span className="text-sm text-green-600 font-medium">Settings saved successfully</span>
             )}
-            {saveStatus === 'error' && (
-              <span className="text-sm text-red-600 font-medium">{errorMessage || 'Failed to save'}</span>
+            {bhSaveStatus === 'error' && (
+              <span className="text-sm text-red-600 font-medium">{bhErrorMessage || 'Failed to save'}</span>
             )}
           </div>
 
@@ -359,6 +478,144 @@ export default function SettingsPage() {
               </li>
             </ul>
           </div>
+        </>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════
+          CALL FORWARDING TAB
+          ═══════════════════════════════════════════════════════ */}
+      {activeTab === 'call-forwarding' && (
+        <>
+          {cfLoading ? (
+            <div className="flex items-center justify-center py-20">
+              <div className="text-gray-500 text-sm">Loading call forwarding settings...</div>
+            </div>
+          ) : (
+            <>
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                {/* Enable toggle */}
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h2 className="text-lg font-semibold text-gray-900">Call Forwarding</h2>
+                    <p className="text-sm text-gray-500 mt-0.5">
+                      Forward unanswered calls to a backup phone number
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setCallForwarding(prev => ({ ...prev, enabled: !prev.enabled }))}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      callForwarding.enabled ? 'bg-blue-600' : 'bg-gray-300'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        callForwarding.enabled ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {callForwarding.enabled && (
+                  <div className="space-y-5">
+                    {/* Fallback phone number */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                        Fallback Phone Number
+                      </label>
+                      <p className="text-xs text-gray-400 mb-2">
+                        The number calls will forward to when no agent answers
+                      </p>
+                      <input
+                        type="tel"
+                        value={formatPhoneDisplay(callForwarding.fallback_number)}
+                        onChange={(e) => handlePhoneChange(e.target.value)}
+                        placeholder="(555) 123-4567"
+                        className="w-full max-w-xs border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+
+                    {/* Ring timeout */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                        Ring Timeout
+                      </label>
+                      <p className="text-xs text-gray-400 mb-2">
+                        How long to ring browser agents before forwarding
+                      </p>
+                      <select
+                        value={callForwarding.ring_timeout}
+                        onChange={(e) => setCallForwarding(prev => ({ ...prev, ring_timeout: Number(e.target.value) }))}
+                        className="w-full max-w-xs border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      >
+                        {RING_TIMEOUT_OPTIONS.map(sec => (
+                          <option key={sec} value={sec}>{sec} seconds{sec === 20 ? ' (default)' : ''}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Fallback timeout */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                        Fallback Timeout
+                      </label>
+                      <p className="text-xs text-gray-400 mb-2">
+                        How long to ring the fallback number before going to voicemail
+                      </p>
+                      <select
+                        value={callForwarding.fallback_timeout}
+                        onChange={(e) => setCallForwarding(prev => ({ ...prev, fallback_timeout: Number(e.target.value) }))}
+                        className="w-full max-w-xs border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      >
+                        {FALLBACK_TIMEOUT_OPTIONS.map(sec => (
+                          <option key={sec} value={sec}>{sec} seconds{sec === 25 ? ' (default)' : ''}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Save button */}
+              <div className="mt-6 flex items-center gap-3">
+                <button
+                  onClick={handleSaveCf}
+                  disabled={cfSaving}
+                  className="px-6 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {cfSaving ? 'Saving...' : 'Save Changes'}
+                </button>
+                {cfSaveStatus === 'success' && (
+                  <span className="text-sm text-green-600 font-medium">Settings saved successfully</span>
+                )}
+                {cfSaveStatus === 'error' && (
+                  <span className="text-sm text-red-600 font-medium">{cfErrorMessage || 'Failed to save'}</span>
+                )}
+              </div>
+
+              {/* Help section */}
+              <div className="mt-8 bg-blue-50 border border-blue-200 rounded-xl p-5">
+                <h3 className="text-sm font-semibold text-blue-900 mb-2">How call forwarding works</h3>
+                <ul className="text-sm text-blue-800 space-y-1.5">
+                  <li>
+                    <strong>Step 1</strong> — When an incoming call arrives, it rings all available browser
+                    agents for the duration of the <strong>ring timeout</strong>.
+                  </li>
+                  <li>
+                    <strong>Step 2</strong> — If no agent answers, the call forwards to the
+                    <strong> fallback phone number</strong> and rings for the <strong>fallback timeout</strong>.
+                  </li>
+                  <li>
+                    <strong>Step 3</strong> — If the fallback number doesn&apos;t answer either, the caller is
+                    sent to voicemail.
+                  </li>
+                  <li>
+                    <strong>When disabled</strong> — unanswered calls skip the forwarding step and go directly
+                    to voicemail.
+                  </li>
+                </ul>
+              </div>
+            </>
+          )}
         </>
       )}
     </div>
