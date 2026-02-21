@@ -9,6 +9,90 @@ interface SoftphoneProps {
   tenantId: string
 }
 
+// Generate a phone ringtone using Web Audio API
+function createRingtone() {
+  let audioContext: AudioContext | null = null
+  let oscillator1: OscillatorNode | null = null
+  let oscillator2: OscillatorNode | null = null
+  let gainNode: GainNode | null = null
+  let intervalId: NodeJS.Timeout | null = null
+  let isPlaying = false
+
+  const start = () => {
+    if (isPlaying) return
+    isPlaying = true
+
+    try {
+      audioContext = new AudioContext()
+      gainNode = audioContext.createGain()
+      gainNode.connect(audioContext.destination)
+      gainNode.gain.value = 0
+
+      // Classic phone ring: two tones mixed together
+      oscillator1 = audioContext.createOscillator()
+      oscillator1.type = 'sine'
+      oscillator1.frequency.value = 440 // A4
+      oscillator1.connect(gainNode)
+      oscillator1.start()
+
+      oscillator2 = audioContext.createOscillator()
+      oscillator2.type = 'sine'
+      oscillator2.frequency.value = 480 // slightly higher
+      oscillator2.connect(gainNode)
+      oscillator2.start()
+
+      // Ring pattern: 2 seconds on, 4 seconds off
+      let ringOn = true
+      const toggleRing = () => {
+        if (!gainNode) return
+        gainNode.gain.setValueAtTime(ringOn ? 0.3 : 0, audioContext!.currentTime)
+        ringOn = !ringOn
+      }
+
+      // Start with ring on
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime)
+      intervalId = setInterval(toggleRing, ringOn ? 2000 : 4000)
+
+      // Use a more reliable ring pattern
+      if (intervalId) clearInterval(intervalId)
+      
+      const ringCycle = () => {
+        if (!isPlaying || !gainNode || !audioContext) return
+        // Ring for 2 seconds
+        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime)
+        // Silence after 2 seconds
+        gainNode.gain.setValueAtTime(0, audioContext.currentTime + 2)
+        // Schedule next ring cycle
+        intervalId = setTimeout(ringCycle, 4000)
+      }
+      ringCycle()
+    } catch (err) {
+      console.error('Failed to create ringtone:', err)
+    }
+  }
+
+  const stop = () => {
+    isPlaying = false
+    if (intervalId) {
+      clearTimeout(intervalId)
+      intervalId = null
+    }
+    try {
+      oscillator1?.stop()
+      oscillator2?.stop()
+      audioContext?.close()
+    } catch {
+      // ignore errors on cleanup
+    }
+    oscillator1 = null
+    oscillator2 = null
+    gainNode = null
+    audioContext = null
+  }
+
+  return { start, stop }
+}
+
 export function Softphone({ userId, tenantId }: SoftphoneProps) {
   const {
     dialNumber,
@@ -43,6 +127,34 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
   const timerRef = useRef<NodeJS.Timeout | null>(null)
   const callStartRef = useRef<Date | null>(null)
   const pendingDialRef = useRef(false)
+  const ringtoneRef = useRef<{ start: () => void; stop: () => void } | null>(null)
+
+  // Initialize ringtone on mount
+  useEffect(() => {
+    ringtoneRef.current = createRingtone()
+    return () => {
+      ringtoneRef.current?.stop()
+    }
+  }, [])
+
+  // Play/stop ringtone based on call state
+  useEffect(() => {
+    if (callState === 'incoming') {
+      ringtoneRef.current?.start()
+      // Also flash the browser tab title
+      const originalTitle = document.title
+      const flashInterval = setInterval(() => {
+        document.title = document.title === '📞 Incoming Call!' ? originalTitle : '📞 Incoming Call!'
+      }, 1000)
+      return () => {
+        clearInterval(flashInterval)
+        document.title = originalTitle
+        ringtoneRef.current?.stop()
+      }
+    } else {
+      ringtoneRef.current?.stop()
+    }
+  }, [callState])
 
   // Calculate default position (bottom-left corner)
   const getDefaultPosition = useCallback(() => ({
