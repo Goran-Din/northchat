@@ -51,10 +51,43 @@ function isWithinBusinessHours(settings: BusinessHoursSettings): boolean {
   return currentMinutes >= startMinutes && currentMinutes < endMinutes
 }
 
-function sendToVoicemail(twiml: InstanceType<typeof VoiceResponse>, greeting?: string) {
-  twiml.say({ voice: 'Polly.Amy' },
-    greeting || 'Thank you for calling. We are currently closed. Please leave a message after the beep.'
-  )
+interface VoicemailSettingsNew {
+  enabled?: boolean
+  voice?: string
+  messages?: {
+    after_hours?: string
+    no_answer?: string
+    voicemail_prompt?: string
+  }
+  // Legacy field
+  greeting?: string
+}
+
+function sendToVoicemail(
+  twiml: InstanceType<typeof VoiceResponse>,
+  reason: 'after_hours' | 'no_answer',
+  vmSettings?: VoicemailSettingsNew,
+) {
+  const voice = (vmSettings?.voice as 'Polly.Joanna' | undefined) || 'Polly.Joanna'
+  const messages = vmSettings?.messages
+
+  // Pick the appropriate greeting based on reason
+  let greeting: string
+  if (reason === 'after_hours') {
+    greeting = messages?.after_hours
+      || vmSettings?.greeting
+      || 'Thank you for calling. We are currently closed.'
+  } else {
+    greeting = messages?.no_answer
+      || vmSettings?.greeting
+      || 'Thank you for calling. No one is available to take your call right now.'
+  }
+
+  const prompt = messages?.voicemail_prompt
+    || 'Please leave your name, number, and a brief message after the tone.'
+
+  twiml.say({ voice }, greeting)
+  twiml.say({ voice }, prompt)
   twiml.record({
     maxLength: 120,
     transcribe: false,
@@ -62,7 +95,7 @@ function sendToVoicemail(twiml: InstanceType<typeof VoiceResponse>, greeting?: s
     recordingStatusCallbackMethod: 'POST',
     playBeep: true,
   })
-  twiml.say({ voice: 'Polly.Amy' }, 'Thank you. Goodbye.')
+  twiml.say({ voice }, 'Thank you. Goodbye.')
 }
 
 export async function POST(request: NextRequest) {
@@ -122,14 +155,13 @@ export async function POST(request: NextRequest) {
 
     const settings = (tenant.settings as Record<string, unknown>) || {}
     const businessHours = settings.business_hours as BusinessHoursSettings | undefined
-    const voicemailSettings = settings.voicemail as Record<string, unknown> | undefined
+    const voicemailSettings = settings.voicemail as VoicemailSettingsNew | undefined
     const callForwardingSettings = settings.call_forwarding as { enabled?: boolean; ring_timeout?: number } | undefined
 
     // Check business hours — if outside hours, go to voicemail
     if (businessHours && !isWithinBusinessHours(businessHours)) {
       console.log('Outside business hours — sending to voicemail')
-      const greeting = voicemailSettings?.greeting as string | undefined
-      sendToVoicemail(twiml, greeting)
+      sendToVoicemail(twiml, 'after_hours', voicemailSettings)
 
       return new NextResponse(twiml.toString(), {
         headers: { 'Content-Type': 'text/xml' },
@@ -162,12 +194,7 @@ export async function POST(request: NextRequest) {
     } else {
       // No agents available — go straight to voicemail
       console.log('No available agents — sending to voicemail')
-
-      const greeting = voicemailSettings?.greeting as string | undefined
-      sendToVoicemail(
-        twiml,
-        greeting || 'Thank you for calling Sunset Services. No one is available to take your call right now. Please leave a message after the beep.'
-      )
+      sendToVoicemail(twiml, 'no_answer', voicemailSettings)
     }
   }
 

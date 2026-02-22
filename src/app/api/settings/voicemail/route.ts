@@ -8,6 +8,11 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+const ALLOWED_VOICES = [
+  'Polly.Joanna', 'Polly.Kendra', 'Polly.Ruth', 'Polly.Amy', 'Polly.Salli',
+  'Polly.Matthew', 'Polly.Joey', 'Polly.Stephen',
+]
+
 async function getUser() {
   const cookieStore = await cookies()
   const supabase = createServerClient(
@@ -55,8 +60,25 @@ export async function GET() {
     }
 
     const settings = (tenant?.settings as Record<string, unknown>) || {}
+    const raw = settings.voicemail as Record<string, unknown> | undefined
+
+    // Backwards compatibility: map old { greeting_message } format to new structure
+    if (raw && !raw.messages && typeof raw.greeting_message === 'string') {
+      return NextResponse.json({
+        voicemail: {
+          enabled: raw.enabled ?? true,
+          voice: raw.voice || 'Polly.Joanna',
+          messages: {
+            after_hours: raw.greeting_message,
+            no_answer: 'All of our team members are currently busy. Please leave a message and we will return your call as soon as possible.',
+            voicemail_prompt: 'Please leave your name, number, and a brief message after the tone.',
+          },
+        },
+      })
+    }
+
     return NextResponse.json({
-      voicemail: settings.voicemail || null,
+      voicemail: raw || null,
     })
   } catch (error) {
     console.error('[Voicemail GET] Error:', error)
@@ -98,7 +120,28 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Missing required field: voicemail' }, { status: 400 })
     }
 
-    // Validate greeting_message
+    // Validate voice
+    if (voicemail.voice && !ALLOWED_VOICES.includes(voicemail.voice)) {
+      return NextResponse.json({ error: `Invalid voice. Allowed: ${ALLOWED_VOICES.join(', ')}` }, { status: 400 })
+    }
+
+    // Validate messages
+    if (voicemail.messages) {
+      const messageKeys = ['after_hours', 'no_answer', 'voicemail_prompt'] as const
+      for (const key of messageKeys) {
+        const msg = voicemail.messages[key]
+        if (msg !== undefined) {
+          if (typeof msg !== 'string') {
+            return NextResponse.json({ error: `Message "${key}" must be a string` }, { status: 400 })
+          }
+          if (msg.length > 500) {
+            return NextResponse.json({ error: `Message "${key}" must be under 500 characters` }, { status: 400 })
+          }
+        }
+      }
+    }
+
+    // Backwards compatibility: also accept old greeting_message format
     if (voicemail.greeting_message !== undefined) {
       if (typeof voicemail.greeting_message !== 'string') {
         return NextResponse.json({ error: 'Greeting message must be a string' }, { status: 400 })
@@ -108,7 +151,7 @@ export async function PUT(request: NextRequest) {
       }
     }
 
-    // Get existing settings to merge (don't overwrite business_hours, call_forwarding, etc.)
+    // Get existing settings to merge
     const { data: tenant } = await supabaseAdmin
       .from('tenants')
       .select('settings')

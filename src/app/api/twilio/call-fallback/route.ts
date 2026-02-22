@@ -4,6 +4,35 @@ import { supabaseAdmin } from '@/lib/supabase/admin'
 
 const VoiceResponse = twilio.twiml.VoiceResponse
 
+function sendToVoicemailTwiml(
+  twiml: InstanceType<typeof VoiceResponse>,
+  settings: Record<string, unknown>,
+) {
+  const vmSettings = settings.voicemail as {
+    voice?: string
+    messages?: { no_answer?: string; voicemail_prompt?: string }
+    greeting?: string
+  } | undefined
+
+  const voice = (vmSettings?.voice as 'Polly.Joanna' | undefined) || 'Polly.Joanna'
+  const noAnswer = vmSettings?.messages?.no_answer
+    || vmSettings?.greeting
+    || 'Thank you for calling. No one is available to take your call right now.'
+  const prompt = vmSettings?.messages?.voicemail_prompt
+    || 'Please leave your name, number, and a brief message after the tone.'
+
+  twiml.say({ voice }, noAnswer)
+  twiml.say({ voice }, prompt)
+  twiml.record({
+    maxLength: 120,
+    transcribe: false,
+    recordingStatusCallback: `${process.env.NEXT_PUBLIC_APP_URL}/api/twilio/recording`,
+    recordingStatusCallbackMethod: 'POST',
+    playBeep: true,
+  })
+  twiml.say({ voice }, 'Thank you. Goodbye.')
+}
+
 export async function POST(request: NextRequest) {
   const formData = await request.formData()
   const dialCallStatus = formData.get('DialCallStatus') as string
@@ -58,21 +87,7 @@ export async function POST(request: NextRequest) {
   } else {
     // Call forwarding disabled or no fallback number — go straight to voicemail
     console.log('Call forwarding disabled — sending to voicemail')
-
-    const voicemailSettings = settings.voicemail as Record<string, unknown> | undefined
-    const greeting = voicemailSettings?.greeting as string | undefined
-
-    twiml.say({ voice: 'Polly.Amy' },
-      greeting || 'Thank you for calling. No one is available to take your call right now. Please leave a message after the beep.'
-    )
-    twiml.record({
-      maxLength: 120,
-      transcribe: false,
-      recordingStatusCallback: `${process.env.NEXT_PUBLIC_APP_URL}/api/twilio/recording`,
-      recordingStatusCallbackMethod: 'POST',
-      playBeep: true,
-    })
-    twiml.say({ voice: 'Polly.Amy' }, 'Thank you. Goodbye.')
+    sendToVoicemailTwiml(twiml, settings)
   }
 
   return new NextResponse(twiml.toString(), {

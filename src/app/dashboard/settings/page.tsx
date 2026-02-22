@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
 // ── Constants ──────────────────────────────────────────────
 
@@ -64,9 +64,16 @@ interface CallForwarding {
   fallback_timeout: number
 }
 
+interface VoicemailMessages {
+  after_hours: string
+  no_answer: string
+  voicemail_prompt: string
+}
+
 interface VoicemailSettings {
   enabled: boolean
-  greeting_message: string
+  voice: string
+  messages: VoicemailMessages
 }
 
 // ── Defaults ───────────────────────────────────────────────
@@ -102,9 +109,47 @@ function getDefaultCallForwarding(): CallForwarding {
 function getDefaultVoicemail(): VoicemailSettings {
   return {
     enabled: true,
-    greeting_message: 'Thank you for calling. No one is available to take your call right now. Please leave a message after the beep.',
+    voice: 'Polly.Joanna',
+    messages: {
+      after_hours: 'Thank you for calling Sunset Services. We are currently closed. Our business hours are Monday through Friday, 8 AM to 5 PM Central Time.',
+      no_answer: 'All of our team members are currently busy. Please leave a message and we will return your call as soon as possible.',
+      voicemail_prompt: 'Please leave your name, number, and a brief message after the tone.',
+    },
   }
 }
+
+const VOICE_OPTIONS = [
+  { group: 'Female', voices: [
+    { value: 'Polly.Joanna', label: 'Joanna', desc: 'US English (most popular)' },
+    { value: 'Polly.Kendra', label: 'Kendra', desc: 'US English' },
+    { value: 'Polly.Ruth', label: 'Ruth', desc: 'US English (neural)' },
+    { value: 'Polly.Amy', label: 'Amy', desc: 'British English' },
+    { value: 'Polly.Salli', label: 'Salli', desc: 'US English' },
+  ]},
+  { group: 'Male', voices: [
+    { value: 'Polly.Matthew', label: 'Matthew', desc: 'US English' },
+    { value: 'Polly.Joey', label: 'Joey', desc: 'US English' },
+    { value: 'Polly.Stephen', label: 'Stephen', desc: 'US English (neural)' },
+  ]},
+]
+
+const VM_MESSAGE_FIELDS: { key: keyof VoicemailMessages; title: string; description: string }[] = [
+  {
+    key: 'after_hours',
+    title: 'After Hours Greeting',
+    description: 'Played when someone calls outside your business hours',
+  },
+  {
+    key: 'no_answer',
+    title: 'No Answer Message',
+    description: 'Played during business hours when no agent picks up',
+  },
+  {
+    key: 'voicemail_prompt',
+    title: 'Voicemail Prompt',
+    description: 'Played right before the recording tone in all scenarios',
+  },
+]
 
 const TABS = [
   { key: 'business-hours', label: 'Business Hours' },
@@ -150,6 +195,8 @@ export default function SettingsPage() {
   const [vmSaving, setVmSaving] = useState(false)
   const [vmSaveStatus, setVmSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const [vmErrorMessage, setVmErrorMessage] = useState('')
+  const [previewingKey, setPreviewingKey] = useState<string | null>(null)
+  const speechRef = useRef<SpeechSynthesisUtterance | null>(null)
 
   const [activeTab, setActiveTab] = useState('business-hours')
 
@@ -243,7 +290,21 @@ export default function SettingsPage() {
       if (res.ok) {
         const data = await res.json()
         if (data.voicemail) {
-          setVoicemail(data.voicemail)
+          // Handle old format from API (already mapped server-side, but be safe)
+          const vm = data.voicemail
+          if (vm.messages) {
+            setVoicemail(vm)
+          } else if (vm.greeting_message) {
+            setVoicemail({
+              enabled: vm.enabled ?? true,
+              voice: vm.voice || 'Polly.Joanna',
+              messages: {
+                after_hours: vm.greeting_message,
+                no_answer: getDefaultVoicemail().messages.no_answer,
+                voicemail_prompt: getDefaultVoicemail().messages.voicemail_prompt,
+              },
+            })
+          }
         }
       }
     } catch (err) {
@@ -358,6 +419,44 @@ export default function SettingsPage() {
     const digits = value.replace(/\D/g, '').slice(0, 10)
     setCallForwarding(prev => ({ ...prev, fallback_number: digits }))
   }
+
+  // ── Voicemail preview helpers ──
+
+  const stopPreview = useCallback(() => {
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel()
+    }
+    speechRef.current = null
+    setPreviewingKey(null)
+  }, [])
+
+  const togglePreview = useCallback((key: string, text: string) => {
+    if (previewingKey === key) {
+      stopPreview()
+      return
+    }
+    stopPreview()
+    if (typeof window === 'undefined' || !window.speechSynthesis || !text.trim()) return
+
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.rate = 0.95
+    utterance.onend = () => {
+      speechRef.current = null
+      setPreviewingKey(null)
+    }
+    utterance.onerror = () => {
+      speechRef.current = null
+      setPreviewingKey(null)
+    }
+    speechRef.current = utterance
+    setPreviewingKey(key)
+    window.speechSynthesis.speak(utterance)
+  }, [previewingKey, stopPreview])
+
+  // Stop preview on tab switch or unmount
+  useEffect(() => {
+    return () => stopPreview()
+  }, [activeTab, stopPreview])
 
   // ── Loading state ──
 
@@ -728,27 +827,79 @@ export default function SettingsPage() {
                 </div>
 
                 {voicemail.enabled && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                      Voicemail Greeting
-                    </label>
-                    <p className="text-xs text-gray-400 mb-2">
-                      The message callers hear before the recording tone
-                    </p>
-                    <textarea
-                      value={voicemail.greeting_message}
-                      onChange={(e) => {
-                        if (e.target.value.length <= 500) {
-                          setVoicemail(prev => ({ ...prev, greeting_message: e.target.value }))
-                        }
-                      }}
-                      rows={4}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
-                      placeholder="Enter your voicemail greeting message..."
-                    />
-                    <p className="mt-1.5 text-xs text-gray-400">
-                      {voicemail.greeting_message.length}/500 characters
-                    </p>
+                  <div className="space-y-6">
+                    {/* Voice selection */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                        Voice
+                      </label>
+                      <p className="text-xs text-gray-400 mb-2">
+                        Choose the voice that reads your messages to callers
+                      </p>
+                      <select
+                        value={voicemail.voice}
+                        onChange={(e) => setVoicemail(prev => ({ ...prev, voice: e.target.value }))}
+                        className="w-full max-w-xs border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      >
+                        {VOICE_OPTIONS.map(group => (
+                          <optgroup key={group.group} label={group.group}>
+                            {group.voices.map(v => (
+                              <option key={v.value} value={v.value}>
+                                {v.label} — {v.desc}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Message textareas */}
+                    {VM_MESSAGE_FIELDS.map(field => (
+                      <div key={field.key}>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="text-sm font-medium text-gray-700">
+                            {field.title}
+                          </label>
+                          <button
+                            onClick={() => togglePreview(field.key, voicemail.messages[field.key])}
+                            className={`flex items-center gap-1 text-xs font-medium px-2 py-1 rounded transition-colors ${
+                              previewingKey === field.key
+                                ? 'bg-blue-100 text-blue-700'
+                                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                            }`}
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              {previewingKey === field.key ? (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z M9 10h6v4H9z" />
+                              ) : (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M12 6v12m0-12l-4 4m4-4l4 4" />
+                              )}
+                            </svg>
+                            {previewingKey === field.key ? 'Stop' : 'Preview'}
+                          </button>
+                        </div>
+                        <p className="text-xs text-gray-400 mb-2">
+                          {field.description}
+                        </p>
+                        <textarea
+                          value={voicemail.messages[field.key]}
+                          onChange={(e) => {
+                            if (e.target.value.length <= 500) {
+                              setVoicemail(prev => ({
+                                ...prev,
+                                messages: { ...prev.messages, [field.key]: e.target.value },
+                              }))
+                            }
+                          }}
+                          rows={4}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+                          placeholder={`Enter ${field.title.toLowerCase()}...`}
+                        />
+                        <p className="mt-1.5 text-xs text-gray-400">
+                          {voicemail.messages[field.key].length}/500 characters
+                        </p>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
@@ -772,17 +923,22 @@ export default function SettingsPage() {
 
               {/* Help section */}
               <div className="mt-8 bg-blue-50 border border-blue-200 rounded-xl p-5">
-                <h3 className="text-sm font-semibold text-blue-900 mb-2">How voicemail works</h3>
-                <ul className="text-sm text-blue-800 space-y-1.5">
+                <h3 className="text-sm font-semibold text-blue-900 mb-2">How voicemail messages work</h3>
+                <p className="text-sm text-blue-800 mb-2">
+                  When a caller reaches voicemail, they hear messages in this order:
+                </p>
+                <ol className="text-sm text-blue-800 space-y-1.5 list-decimal list-inside">
                   <li>
-                    <strong>When enabled</strong> — callers who reach voicemail will hear your custom
-                    greeting followed by a recording tone. Recordings are saved to the call log.
+                    <strong>After Hours Greeting</strong> OR <strong>No Answer Message</strong> — depending
+                    on whether the call arrived outside business hours or during hours when no one picked up.
                   </li>
                   <li>
-                    <strong>When disabled</strong> — unanswered calls will simply disconnect after
-                    the fallback timeout.
+                    <strong>Voicemail Prompt</strong> — always played before the recording tone.
                   </li>
-                </ul>
+                  <li>
+                    Recording starts automatically after the tone.
+                  </li>
+                </ol>
               </div>
             </>
           )}
