@@ -102,10 +102,10 @@ export async function GET(
     if (phoneNumbers.length > 0) {
       for (const phone of phoneNumbers) {
         const { data: calls } = await supabaseAdmin
-          .from('call_log')
+          .from('call_records')
           .select('*')
           .eq('tenant_id', profile.tenant_id)
-          .or(`from_number.eq.${phone},to_number.eq.${phone}`)
+          .or(`phone_from.eq.${phone},phone_to.eq.${phone}`)
           .order('created_at', { ascending: false })
           .limit(50)
 
@@ -115,10 +115,10 @@ export async function GET(
               id: call.id,
               type: 'call',
               direction: call.direction,
-              summary: `${call.direction === 'inbound' ? 'Inbound' : 'Outbound'} call - ${call.status || 'completed'}`,
-              status: call.status,
+              summary: `${call.direction === 'inbound' ? 'Inbound' : 'Outbound'} call - ${call.disposition || 'completed'}`,
+              status: call.disposition,
               duration: call.duration_seconds,
-              time: call.started_at || call.created_at,
+              time: call.created_at,
             })
           })
         }

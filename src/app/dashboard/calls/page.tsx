@@ -134,10 +134,14 @@ export default function CallsPage() {
     switch (s) {
       case 'completed':
         return { bg: 'bg-green-50 text-green-700 border-green-200', label: 'Completed' }
-      case 'missed':
-        return { bg: 'bg-red-50 text-red-700 border-red-200', label: 'Missed' }
-      case 'voicemail':
-        return { bg: 'bg-orange-50 text-orange-700 border-orange-200', label: 'Voicemail' }
+      case 'no_answer':
+        return { bg: 'bg-red-50 text-red-700 border-red-200', label: 'No Answer' }
+      case 'busy':
+        return { bg: 'bg-orange-50 text-orange-700 border-orange-200', label: 'Busy' }
+      case 'failed':
+        return { bg: 'bg-red-50 text-red-700 border-red-200', label: 'Failed' }
+      case 'in_progress':
+        return { bg: 'bg-blue-50 text-blue-700 border-blue-200', label: 'In Progress' }
       default:
         return { bg: 'bg-gray-50 text-gray-600 border-gray-200', label: s || 'Unknown' }
     }
@@ -156,8 +160,9 @@ export default function CallsPage() {
   const statusFilters = [
     { value: '', label: 'All' },
     { value: 'completed', label: 'Completed' },
-    { value: 'missed', label: 'Missed' },
-    { value: 'voicemail', label: 'Voicemail' },
+    { value: 'no_answer', label: 'No Answer' },
+    { value: 'busy', label: 'Busy' },
+    { value: 'failed', label: 'Failed' },
   ]
 
   const hasMore = calls.length < total

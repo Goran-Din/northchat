@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
 
     // Build query
     let query = supabaseAdmin
-      .from('call_log')
+      .from('call_records')
       .select('*', { count: 'exact' })
       .eq('tenant_id', profile.tenant_id)
 
@@ -67,23 +67,23 @@ export async function GET(request: NextRequest) {
     }
 
     if (status) {
-      query = query.eq('status', status)
+      query = query.eq('disposition', status)
     }
 
     if (search) {
-      query = query.or(`from_number.ilike.%${search}%,to_number.ilike.%${search}%`)
+      query = query.or(`phone_from.ilike.%${search}%,phone_to.ilike.%${search}%`)
     }
 
     if (from) {
-      query = query.gte('started_at', from)
+      query = query.gte('created_at', from)
     }
 
     if (to) {
-      query = query.lte('started_at', to)
+      query = query.lte('created_at', to)
     }
 
     query = query
-      .order('started_at', { ascending: false })
+      .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1)
 
     const { data: calls, count, error } = await query
@@ -99,10 +99,10 @@ export async function GET(request: NextRequest) {
     // Collect unique phone numbers to look up
     const phonesToLookup = new Set<string>()
     for (const call of callList) {
-      if (call.direction === 'inbound' && call.from_number) {
-        phonesToLookup.add(call.from_number)
-      } else if (call.direction === 'outbound' && call.to_number) {
-        phonesToLookup.add(call.to_number)
+      if (call.direction === 'inbound' && call.phone_from) {
+        phonesToLookup.add(call.phone_from)
+      } else if (call.direction === 'outbound' && call.phone_to) {
+        phonesToLookup.add(call.phone_to)
       }
     }
 
@@ -126,11 +126,18 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Enrich calls with contact names
+    // Enrich calls with contact names and remap column names for frontend
     const enrichedCalls = callList.map((call) => {
-      const lookupNumber = call.direction === 'inbound' ? call.from_number : call.to_number
+      const lookupNumber = call.direction === 'inbound' ? call.phone_from : call.phone_to
       return {
-        ...call,
+        id: call.id,
+        direction: call.direction,
+        from_number: call.phone_from,
+        to_number: call.phone_to,
+        status: call.disposition,
+        duration_seconds: call.duration_seconds,
+        started_at: call.created_at,
+        created_at: call.created_at,
         contact_name: phoneToContact.get(lookupNumber) || null,
       }
     })
