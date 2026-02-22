@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Search, Plus, Phone, MessageSquare, Mail, StickyNote, ArrowDownLeft, ArrowUpRight, X, User, Building, Tag, Clock, Send, Pencil, Trash2, MapPin } from 'lucide-react'
+import { Search, Plus, Phone, MessageSquare, Mail, StickyNote, ArrowDownLeft, ArrowUpRight, X, User, Building, Tag, Clock, Send, Pencil, Trash2, MapPin, Upload } from 'lucide-react'
 import { useSoftphone } from '@/contexts/SoftphoneContext'
 import { ClickablePhone } from '@/components/ui/clickable-phone'
 
@@ -476,13 +476,22 @@ export default function ContactsPage() {
         {/* Header */}
         <div className="p-4 border-b border-gray-200 flex items-center justify-between">
           <h2 className="text-xl font-bold text-gray-900">Contacts</h2>
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            Add
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => router.push('/dashboard/contacts/import')}
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              <Upload className="w-4 h-4" />
+              Import CSV
+            </button>
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Add
+            </button>
+          </div>
         </div>
 
         {/* Search */}
