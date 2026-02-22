@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Phone, ArrowDownLeft, ArrowUpRight, Search, RefreshCw, MessageSquare, Clock, Voicemail } from 'lucide-react'
 import { useSoftphone } from '@/contexts/SoftphoneContext'
+import { ClickablePhone } from '@/components/ui/clickable-phone'
 
 interface CallRecord {
   id: string
@@ -291,7 +292,7 @@ export default function CallsPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-semibold text-gray-900 truncate">
-                        {call.contact_name || formatPhone(phone)}
+                        {call.contact_name || <ClickablePhone phoneNumber={phone} />}
                       </span>
                       <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${badge.bg}`}>
                         {badge.label}
@@ -299,7 +300,7 @@ export default function CallsPage() {
                     </div>
                     <div className="flex items-center gap-2 mt-0.5 text-xs text-gray-400">
                       {call.contact_name && (
-                        <span>{formatPhone(phone)}</span>
+                        <ClickablePhone phoneNumber={phone} />
                       )}
                       <span>{isInbound ? 'Inbound' : 'Outbound'}</span>
                       {call.duration_seconds != null && call.duration_seconds > 0 && (

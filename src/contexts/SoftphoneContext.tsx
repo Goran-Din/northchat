@@ -8,6 +8,8 @@ interface SoftphoneContextValue {
   triggerCall: (number: string) => void
   isSoftphoneOpen: boolean
   setIsSoftphoneOpen: (open: boolean) => void
+  deviceReady: boolean
+  setDeviceReady: (ready: boolean) => void
 }
 
 const SoftphoneContext = createContext<SoftphoneContextValue | null>(null)
@@ -15,6 +17,7 @@ const SoftphoneContext = createContext<SoftphoneContextValue | null>(null)
 export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
   const [dialNumber, setDialNumber] = useState('')
   const [isSoftphoneOpen, setIsSoftphoneOpen] = useState(false)
+  const [deviceReady, setDeviceReady] = useState(false)
 
   const triggerCall = useCallback((number: string) => {
     setDialNumber(number)
@@ -23,7 +26,7 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <SoftphoneContext.Provider
-      value={{ dialNumber, setDialNumber, triggerCall, isSoftphoneOpen, setIsSoftphoneOpen }}
+      value={{ dialNumber, setDialNumber, triggerCall, isSoftphoneOpen, setIsSoftphoneOpen, deviceReady, setDeviceReady }}
     >
       {children}
     </SoftphoneContext.Provider>

@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Search, Plus, Phone, MessageSquare, Mail, StickyNote, ArrowDownLeft, ArrowUpRight, X, User, Building, Tag, Clock, Send, Pencil, Trash2, MapPin } from 'lucide-react'
 import { useSoftphone } from '@/contexts/SoftphoneContext'
+import { ClickablePhone } from '@/components/ui/clickable-phone'
 
 // Types
 interface ContactIdentifier {
@@ -715,7 +716,7 @@ export default function ContactsPage() {
                     </div>
                     <div>
                       <div className="text-sm font-medium text-gray-900">
-                        {id.identifier_type === 'phone' ? formatPhone(id.identifier_value) : id.identifier_value}
+                        {id.identifier_type === 'phone' ? <ClickablePhone phoneNumber={id.identifier_value} /> : id.identifier_value}
                       </div>
                       <div className="text-[11px] text-gray-400">
                         {id.identifier_type === 'phone' ? 'Phone' : 'Email'}

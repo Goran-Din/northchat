@@ -189,6 +189,7 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
     setDialNumber,
     isSoftphoneOpen: isExpanded,
     setIsSoftphoneOpen: setIsExpanded,
+    setDeviceReady: setContextDeviceReady,
   } = useSoftphone()
 
   const [device, setDevice] = useState<Device | null>(null)
@@ -197,7 +198,11 @@ export function Softphone({ userId, tenantId }: SoftphoneProps) {
   const [phoneNumber, setPhoneNumber] = useState('')
   const [isMuted, setIsMuted] = useState(false)
   const [callDuration, setCallDuration] = useState(0)
-  const [deviceReady, setDeviceReady] = useState(false)
+  const [deviceReady, setDeviceReadyLocal] = useState(false)
+  const setDeviceReady = useCallback((ready: boolean) => {
+    setDeviceReadyLocal(ready)
+    setContextDeviceReady(ready)
+  }, [setContextDeviceReady])
   const [error, setError] = useState<string | null>(null)
   const [incomingFrom, setIncomingFrom] = useState('')
   const [showDialpad, setShowDialpad] = useState(true)
